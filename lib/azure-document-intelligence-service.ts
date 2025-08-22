@@ -1,6 +1,6 @@
 
 
-import { DocumentIntelligenceClient, AzureKeyCredential } from "@azure/ai-document-intelligence";
+import { DocumentAnalysisClient, AzureKeyCredential } from "@azure/ai-form-recognizer";
 import { readFile } from "fs/promises";
 
 export interface AzureDocumentIntelligenceConfig {
