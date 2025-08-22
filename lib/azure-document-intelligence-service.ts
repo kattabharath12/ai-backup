@@ -235,7 +235,7 @@ export class AzureDocumentIntelligenceService {
     }
     
     // OCR fallback for personal info if not found in structured fields
-    if ((!w2Data.employeeName || !w2Data.employeeSSN || !w2Data.employeeAddress) && baseData.fullText) {
+    if ((!w2Data.employeeName || !w2Data.employeeSSN || !w2Data.employeeAddress || !w2Data.employerName || !w2Data.employerAddress) && baseData.fullText) {
       console.log('🔍 [Azure DI] Some personal info missing from structured fields, attempting OCR extraction...');
       const personalInfoFromOCR = this.extractPersonalInfoFromOCR(baseData.fullText as string);
       
@@ -252,6 +252,16 @@ export class AzureDocumentIntelligenceService {
       if (!w2Data.employeeAddress && personalInfoFromOCR.address) {
         w2Data.employeeAddress = personalInfoFromOCR.address;
         console.log('✅ [Azure DI] Extracted employee address from OCR:', w2Data.employeeAddress);
+      }
+      
+      if (!w2Data.employerName && personalInfoFromOCR.employerName) {
+        w2Data.employerName = personalInfoFromOCR.employerName;
+        console.log('✅ [Azure DI] Extracted employer name from OCR:', w2Data.employerName);
+      }
+      
+      if (!w2Data.employerAddress && personalInfoFromOCR.employerAddress) {
+        w2Data.employerAddress = personalInfoFromOCR.employerAddress;
+        console.log('✅ [Azure DI] Extracted employer address from OCR:', w2Data.employerAddress);
       }
     }
 
@@ -557,6 +567,8 @@ export class AzureDocumentIntelligenceService {
     payerName?: string;
     payerTIN?: string;
     payerAddress?: string;
+    employerName?: string;
+    employerAddress?: string;
   } {
     console.log('🔍 [Azure DI OCR] Searching for personal info in OCR text...');
     
@@ -579,7 +591,70 @@ export class AzureDocumentIntelligenceService {
     
     // Default to W2 extraction (preserves existing functionality)
     console.log('🔍 [Azure DI OCR] Using W2 extraction patterns (form type:', formType, ')...');
-    const personalInfo: { name?: string; ssn?: string; address?: string } = {};
+    const personalInfo: { name?: string; ssn?: string; address?: string; employerName?: string; employerAddress?: string } = {};
+    
+    // Extract employer address - comprehensive patterns for W-2 format variations
+    // Ordered from most specific to least specific to prevent conflicts
+    const employerAddressPatterns = [
+      // Tier 1: Standard W-2 employer address patterns
+      {
+        name: 'EMPLOYER_ADDRESS_STANDARD_MULTILINE',
+        pattern: /c\s+Employer's\s+name,?\s+address,?\s+and\s+ZIP\s+code\s*\n([^\n]+(?:\n[A-Za-z0-9\s,.-]+)*?)(?=\n\s*\n|\nd\s+Control|\ne\s+Employee|\nEmployee|$)/i,
+        example: 'c Employer\'s name, address, and ZIP code\nACME Corp\n123 Business Ave\nNew York, NY 10001'
+      },
+      {
+        name: 'EMPLOYER_ADDRESS_INLINE_ENHANCED',
+        pattern: /Employer:\s*([^,\n]+(?:,\s*[^,\n]+)*?)(?=\n(?:Employee|EIN|SSN|Wages|\d+\s+)|$)/i,
+        example: 'Employer: QuickStart LLC, 555 Main St, Chicago, IL 60601'
+      },
+      {
+        name: 'EMPLOYER_ADDRESS_COMBINED_FORMAT',
+        pattern: /c\s+Employer's\s+name,?\s+address,?\s+and\s+ZIP\s+code\s+([A-Z][A-Z0-9\s,.-]+?)(?=\n|$)/i,
+        example: 'c Employer\'s name, address, and ZIP code WALMART INC 702 SW 8TH ST BENTONVILLE AR 72716'
+      },
+      {
+        name: 'EMPLOYER_NAME_ADDRESS_SEPARATE',
+        pattern: /Employer[:\s]+([A-Za-z0-9\s,.-]+?)(?=\n(?:Address|Employee|EIN|SSN|Wages|\d+\s+)|$)/i,
+        example: 'Employer: ACME Corporation'
+      }
+    ];
+
+    // Try to extract employer address
+    for (const patternInfo of employerAddressPatterns) {
+      const match = ocrText.match(patternInfo.pattern);
+      if (match && match[1]) {
+        personalInfo.employerAddress = match[1].trim().replace(/\s+/g, ' ');
+        console.log(`🔍 [Azure DI OCR] Employer address pattern matched: ${patternInfo.name}`);
+        console.log('✅ [Azure DI OCR] Found employer address:', personalInfo.employerAddress);
+        break;
+      }
+    }
+
+    // Extract employer name if not already captured in address
+    if (!personalInfo.employerAddress || !personalInfo.employerAddress.includes(',')) {
+      const employerNamePatterns = [
+        {
+          name: 'EMPLOYER_NAME_STANDARD',
+          pattern: /c\s+Employer's\s+name,?\s+address,?\s+and\s+ZIP\s+code\s*\n([A-Za-z0-9\s&.,'-]+?)(?:\n[0-9]|\nAddress|\n[A-Za-z]+\s+[A-Za-z]+|$)/i,
+          example: 'c Employer\'s name, address, and ZIP code\nACME Corporation'
+        },
+        {
+          name: 'EMPLOYER_NAME_INLINE',
+          pattern: /Employer[:\s]+([A-Za-z0-9\s&.,'-]+?)(?=\n|,|\s+\d+\s+[A-Za-z]|$)/i,
+          example: 'Employer: ACME Corporation'
+        }
+      ];
+
+      for (const patternInfo of employerNamePatterns) {
+        const match = ocrText.match(patternInfo.pattern);
+        if (match && match[1]) {
+          personalInfo.employerName = match[1].trim().replace(/\s+/g, ' ');
+          console.log(`🔍 [Azure DI OCR] Employer name pattern matched: ${patternInfo.name}`);
+          console.log('✅ [Azure DI OCR] Found employer name:', personalInfo.employerName);
+          break;
+        }
+      }
+    }
     
     // Extract employee name - comprehensive patterns for W-2 format variations
     // Ordered from most specific to least specific to prevent conflicts
@@ -811,6 +886,23 @@ export class AzureDocumentIntelligenceService {
         example: 'address and ZIP code\n123 Main St\nAnytown TX 12345'
       },
       
+      // Tier 3.5: Improved specific address patterns (to prevent false matches)
+      {
+        name: 'EMPLOYEE_ADDRESS_FLEXIBLE_IMPROVED',
+        pattern: /Employee's\s+address:\s*([^\n]+(?:,\s*[^\n]+)*)(?=\n(?:Wages|SSN|\d+\s+)|$)/i,
+        example: 'Employee\'s address: 888 Lake Shore Dr, Chicago, IL 60611'
+      },
+      {
+        name: 'EMPLOYEE_ADDRESS_AFTER_NAME_IMPROVED',
+        pattern: /Employee:\s*[A-Za-z\s]+\s*\nEmployee's\s+address:\s*([^\n]+)(?=\n(?:Wages|SSN|\d+\s+)|$)/i,
+        example: 'Employee: Robert Williams\nEmployee\'s address: 888 Lake Shore Dr, Chicago, IL 60611'
+      },
+      {
+        name: 'W2_ADDRESS_MULTILINE_STRICT',
+        pattern: /f\s+Employee's\s+address\s+and\s+ZIP\s+code\s*\n([A-Za-z0-9\s,.-]+(?:\n[A-Za-z0-9\s,.-]+)*?)(?=\n\s*\n|\na\s+Employee|\nEmployee's\s+social|\nSSN|\n\d+\s+(?:Wages|Federal|Social)|$)/i,
+        example: 'f Employee\'s address and ZIP code\n456 Residential St\nApt 3B\nBrooklyn, NY 11201'
+      },
+      
       // Tier 4: Generic address patterns
       {
         name: 'GENERIC_ADDRESS_ENHANCED',
@@ -860,7 +952,9 @@ export class AzureDocumentIntelligenceService {
       tin: personalInfo.ssn, // Map SSN to TIN field for 1099 compatibility
       payerName: undefined, // Not applicable for W2
       payerTIN: undefined, // Not applicable for W2
-      payerAddress: undefined // Not applicable for W2
+      payerAddress: undefined, // Not applicable for W2
+      employerName: personalInfo.employerName,
+      employerAddress: personalInfo.employerAddress
     };
   }
 
