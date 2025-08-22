@@ -850,7 +850,7 @@ export class AzureDocumentIntelligenceService {
       // Tier 2: W-2 specific address patterns
       {
         name: 'W2_ADDRESS_WITH_PREFIX_ENHANCED',
-        pattern: /f\s+Employee's\s+address\s+and\s+ZIP\s+code\s+([^\n]+?)(?:\n|a\s+Employee's\s+social|Employee's\s+social|$)/i,
+        pattern: /f\s+Employee's\s+address\s+and\s+ZIP\s+code\s+(\d{3,}\s+[A-Za-z][A-Za-z0-9\s,.-]{10,})(?:\n|a\s+Employee's\s+social|Employee's\s+social|$)/i,
         example: 'f Employee\'s address and ZIP code 315 AVENUE , APT 900, 78900'
       },
       {
@@ -860,7 +860,7 @@ export class AzureDocumentIntelligenceService {
       },
       {
         name: 'W2_AFTER_NAME_MULTILINE_ENHANCED',
-        pattern: /(?:e\s+)?Employee's\s+first\s+name\s+and\s+initial\s+Last\s+name\s+[A-Za-z\s]+?\s+([0-9][^\n]*?)(?:\n|Employee's\s+social|$)/i,
+        pattern: /(?:e\s+)?Employee's\s+first\s+name\s+and\s+initial\s+Last\s+name\s+[A-Za-z\s]+?\s+([0-9][^f\n]*?)(?=\n\d+|\nf Employee|\Z)/i,
         example: 'e Employee\'s first name and initial Last name Michelle Hicks 0121 Gary Islands Apt. 691 Sandraport UT 35155-6840'
       },
       {
