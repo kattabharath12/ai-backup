@@ -42,7 +42,7 @@
     "typescript": "5.2.2"
   },
   "dependencies": {
-    "@azure/ai-document-intelligence": "^1.0.0",
+    "@azure/ai-form-recognizer": "^5.1.0",
     "@floating-ui/react": "0.26.0",
     "@headlessui/react": "1.7.18",
     "@hookform/resolvers": "3.9.0",
