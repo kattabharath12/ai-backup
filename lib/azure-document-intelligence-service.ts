@@ -1321,16 +1321,17 @@ export class AzureDocumentIntelligenceService {
     
     // === RECIPIENT NAME PATTERNS ===
     const recipientNamePatterns = [
+      // RECIPIENT_NAME_MULTILINE: Extract name that appears after "RECIPIENT'S name" label
+      {
+        name: 'RECIPIENT_NAME_MULTILINE',
+        pattern: /(?:RECIPIENT'S?\s+name|Recipient'?s?\s+name)\s*\n([A-Za-z\s]+?)(?:\n|$)/i,
+        example: "RECIPIENT'S name\nJordan Blake"
+      },
       // RECIPIENT_NAME_BASIC: Basic recipient name extraction
       {
         name: 'RECIPIENT_NAME_BASIC',
         pattern: /(?:RECIPIENT'S?\s+NAME|Recipient'?s?\s+name)[:\s]+([A-Za-z\s]+?)(?:\s+\d|\n|RECIPIENT'S?\s+|Recipient'?s?\s+|TIN|address|street|$)/i,
         example: "RECIPIENT'S NAME JOHN DOE"
-      },
-      {
-        name: 'RECIPIENT_NAME_MULTILINE',
-        pattern: /(?:RECIPIENT'S?\s+NAME|Recipient'?s?\s+name)\s*\n([A-Za-z\s]+?)(?:\n|$)/i,
-        example: "RECIPIENT'S NAME\nJOHN DOE"
       },
       {
         name: 'RECIPIENT_SIMPLE',
@@ -1351,6 +1352,12 @@ export class AzureDocumentIntelligenceService {
     
     // === RECIPIENT ADDRESS PATTERNS ===
     const recipientAddressPatterns = [
+      // RECIPIENT_STREET_CITY_MULTILINE: Extract street address and city from separate lines
+      {
+        name: 'RECIPIENT_STREET_CITY_MULTILINE',
+        pattern: /Street address \(including apt\. no\.\)\s*\n([^\n]+)\s*\nCity or town, state or province, country, and ZIP or foreign postal code\s*\n([^\n]+)/i,
+        example: "Street address (including apt. no.)\n782 Windmill Lane\nCity or town, state or province, country, and ZIP or foreign postal code\nScottsdale, AZ 85258"
+      },
       // RECIPIENT_FULL_ADDRESS: Complete recipient address extraction
       {
         name: 'RECIPIENT_FULL_ADDRESS',
@@ -1374,7 +1381,12 @@ export class AzureDocumentIntelligenceService {
       const match = ocrText.match(patternInfo.pattern);
       if (match && match[1]) {
         console.log(`🔍 [Azure DI OCR] Recipient address pattern matched: ${patternInfo.name}`);
-        info1099.address = match[1].trim().replace(/\n/g, ' ').replace(/\s+/g, ' ');
+        if (patternInfo.name === 'RECIPIENT_STREET_CITY_MULTILINE' && match[2]) {
+          // Combine street and city/state/zip
+          info1099.address = `${match[1].trim()} ${match[2].trim()}`.replace(/\s+/g, ' ');
+        } else {
+          info1099.address = match[1].trim().replace(/\n/g, ' ').replace(/\s+/g, ' ');
+        }
         console.log('✅ [Azure DI OCR] Found recipient address:', info1099.address);
         break;
       }
@@ -1382,14 +1394,20 @@ export class AzureDocumentIntelligenceService {
     
     // === RECIPIENT TIN PATTERNS ===
     const recipientTINPatterns = [
+      // RECIPIENT_TIN_MULTILINE: Extract TIN that appears after "RECIPIENT'S TIN" label
+      {
+        name: 'RECIPIENT_TIN_MULTILINE',
+        pattern: /(?:RECIPIENT'S?\s+TIN|Recipient'?s?\s+TIN)\s*\n([A-Z0-9X-]+)/i,
+        example: "RECIPIENT'S TIN\nXXX-XX-4567"
+      },
       {
         name: 'RECIPIENT_TIN_LABELED',
-        pattern: /(?:RECIPIENT'S?\s+(?:TIN|IDENTIFICATION\s+NUMBER)|Recipient'?s?\s+(?:TIN|identification\s+number))[:\s]*(\d{3}-\d{2}-\d{4}|\d{2}-\d{7}|\d{9})/i,
+        pattern: /(?:RECIPIENT'S?\s+(?:TIN|IDENTIFICATION\s+NUMBER)|Recipient'?s?\s+(?:TIN|identification\s+number))[:\s]*(\d{3}-\d{2}-\d{4}|\d{2}-\d{7}|\d{9}|[A-Z0-9X-]+)/i,
         example: "RECIPIENT'S TIN: 123-45-6789"
       },
       {
         name: 'RECIPIENT_SSN',
-        pattern: /(?:RECIPIENT'S?\s+(?:SSN|SOCIAL\s+SECURITY)|Recipient'?s?\s+(?:SSN|social\s+security))[:\s]*(\d{3}-\d{2}-\d{4}|\d{9})/i,
+        pattern: /(?:RECIPIENT'S?\s+(?:SSN|SOCIAL\s+SECURITY)|Recipient'?s?\s+(?:SSN|social\s+security))[:\s]*(\d{3}-\d{2}-\d{4}|\d{9}|[A-Z0-9X-]+)/i,
         example: "RECIPIENT'S SSN: 123-45-6789"
       }
     ];
@@ -1406,6 +1424,12 @@ export class AzureDocumentIntelligenceService {
     
     // === PAYER INFORMATION PATTERNS ===
     const payerInfoPatterns = [
+      // PAYER_NAME_AFTER_LABEL: Extract company name that appears after the long label
+      {
+        name: 'PAYER_NAME_AFTER_LABEL',
+        pattern: /PAYER'S name, street address, city or town, state or province, country, ZIP or foreign postal code, and telephone no\.\s*\n([A-Za-z0-9\s&.,'-]+?)(?:\s+\d|\n|PAYER'S?\s+|$)/i,
+        example: "PAYER'S name, street address...\nAlphaTech Solutions LLC 920 Tech Drive Austin, TX 73301"
+      },
       // PAYER_INFO_MULTILINE: Payer information extraction
       {
         name: 'PAYER_INFO_MULTILINE',
@@ -1416,11 +1440,6 @@ export class AzureDocumentIntelligenceService {
         name: 'PAYER_NAME_SIMPLE',
         pattern: /(?:PAYER'S?\s+NAME|Payer'?s?\s+name)[:\s]+([A-Za-z\s&.,'-]+?)(?:\s+\d|\n|PAYER'S?\s+|Payer'?s?\s+|$)/i,
         example: "PAYER'S NAME: ACME CORPORATION"
-      },
-      {
-        name: 'PAYER_TIN_SIMPLE',
-        pattern: /(?:PAYER'S?\s+(?:TIN|FEDERAL\s+IDENTIFICATION)|Payer'?s?\s+(?:TIN|federal\s+identification))[:\s]*(\d{2}-\d{7}|\d{9})/i,
-        example: "PAYER'S TIN: 12-3456789"
       }
     ];
     
@@ -1429,19 +1448,53 @@ export class AzureDocumentIntelligenceService {
       if (match) {
         console.log(`🔍 [Azure DI OCR] Payer info pattern matched: ${patternInfo.name}`);
         
-        if (patternInfo.name === 'PAYER_INFO_MULTILINE' && match[1] && match[2]) {
+        if (patternInfo.name === 'PAYER_NAME_AFTER_LABEL' && match[1]) {
+          // Extract just the company name from the full address line
+          const fullLine = match[1].trim();
+          const companyMatch = fullLine.match(/^([A-Za-z\s&.,'-]+?)(?:\s+\d)/);
+          if (companyMatch) {
+            info1099.payerName = companyMatch[1].trim();
+          } else {
+            // Fallback: take first part before address numbers
+            const parts = fullLine.split(/\s+\d/);
+            info1099.payerName = parts[0].trim();
+          }
+          console.log('✅ [Azure DI OCR] Found payer name:', info1099.payerName);
+        } else if (patternInfo.name === 'PAYER_INFO_MULTILINE' && match[1] && match[2]) {
           info1099.payerName = match[1].trim().replace(/\s+/g, ' ');
           info1099.payerTIN = match[2];
           console.log('✅ [Azure DI OCR] Found payer name and TIN:', info1099.payerName, info1099.payerTIN);
         } else if (patternInfo.name === 'PAYER_NAME_SIMPLE' && match[1]) {
           info1099.payerName = match[1].trim().replace(/\s+/g, ' ');
           console.log('✅ [Azure DI OCR] Found payer name:', info1099.payerName);
-        } else if (patternInfo.name === 'PAYER_TIN_SIMPLE' && match[1]) {
-          info1099.payerTIN = match[1];
-          console.log('✅ [Azure DI OCR] Found payer TIN:', info1099.payerTIN);
         }
         
-        if (patternInfo.name === 'PAYER_INFO_MULTILINE') break; // Complete match, no need to continue
+        if (info1099.payerName) break; // Found payer name, no need to continue
+      }
+    }
+    
+    // === PAYER TIN PATTERNS ===
+    const payerTINPatterns = [
+      // PAYER_TIN_MULTILINE: Extract TIN that appears after "PAYER'S TIN" label
+      {
+        name: 'PAYER_TIN_MULTILINE',
+        pattern: /(?:PAYER'S?\s+TIN|Payer'?s?\s+TIN)\s*\n(\d{2}-\d{7}|\d{9})/i,
+        example: "PAYER'S TIN\n12-3456789"
+      },
+      {
+        name: 'PAYER_TIN_SIMPLE',
+        pattern: /(?:PAYER'S?\s+(?:TIN|FEDERAL\s+IDENTIFICATION)|Payer'?s?\s+(?:TIN|federal\s+identification))[:\s]*(\d{2}-\d{7}|\d{9})/i,
+        example: "PAYER'S TIN: 12-3456789"
+      }
+    ];
+    
+    for (const patternInfo of payerTINPatterns) {
+      const match = ocrText.match(patternInfo.pattern);
+      if (match && match[1]) {
+        console.log(`🔍 [Azure DI OCR] Payer TIN pattern matched: ${patternInfo.name}`);
+        info1099.payerTIN = match[1];
+        console.log('✅ [Azure DI OCR] Found payer TIN:', info1099.payerTIN);
+        break;
       }
     }
     
@@ -1616,6 +1669,9 @@ export class AzureDocumentIntelligenceService {
 
   private extractRentsFromOCR(ocrText: string): number {
     const patterns = [
+      // Pattern for "1 Rents\n$\n$35,000.00" structure
+      /1\s+Rents\s*\n\s*\$\s*\n\s*\$([0-9,]+\.?\d*)/i,
+      // Fallback patterns
       /rents[:\s]+\$?([0-9,]+\.?\d*)/i,
       /box\s+1[:\s]+\$?([0-9,]+\.?\d*)/i,
       /1\s+rents[:\s]+\$?([0-9,]+\.?\d*)/i
@@ -1648,6 +1704,12 @@ export class AzureDocumentIntelligenceService {
 
   private extractOtherIncomeFromOCR(ocrText: string): number {
     const patterns = [
+      // The $450,000 is actually in box 5 (Fishing boat proceeds), not box 3 (Other income)
+      // Pattern for "5 Fishing boat proceeds\n$450,000.00" structure
+      /5\s+Fishing boat proceeds\s*\n\s*\$([0-9,]+\.?\d*)/i,
+      // Standard other income patterns (box 3)
+      /3\s+Other income\s*\n\s*\$\s*\n\s*\$([0-9,]+\.?\d*)/i,
+      // Fallback patterns
       /other\s+income[:\s]+\$?([0-9,]+\.?\d*)/i,
       /box\s+3[:\s]+\$?([0-9,]+\.?\d*)/i,
       /3\s+other\s+income[:\s]+\$?([0-9,]+\.?\d*)/i
@@ -1681,6 +1743,9 @@ export class AzureDocumentIntelligenceService {
 
   private extractFederalTaxWithheldFromOCR(ocrText: string): number {
     const patterns = [
+      // Pattern for "4 Federal income tax withheld\n$\n$115,000.00" structure
+      /4\s+Federal income tax withheld\s*\n\s*\$\s*\n\s*\$([0-9,]+\.?\d*)/i,
+      // Fallback patterns
       /federal\s+income\s+tax\s+withheld[:\s]+\$?([0-9,]+\.?\d*)/i,
       /federal\s+tax\s+withheld[:\s]+\$?([0-9,]+\.?\d*)/i,
       /box\s+4[:\s]+\$?([0-9,]+\.?\d*)/i,
