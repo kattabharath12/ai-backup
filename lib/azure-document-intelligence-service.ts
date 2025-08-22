@@ -27,9 +27,10 @@ export class AzureDocumentIntelligenceService {
   async extractDataFromDocument(
     documentPathOrBuffer: string | Buffer,
     documentType: string
-  ): Promise<ExtractedFieldData> {
+  ): Promise<ExtractedFieldData & { correctedDocumentType?: string }> {
     try {
       console.log('🔍 [Azure DI] Processing document with Azure Document Intelligence...');
+      console.log('🔍 [Azure DI] Initial document type:', documentType);
       
       // Get document buffer - either from file path or use provided buffer
       const documentBuffer = typeof documentPathOrBuffer === 'string' 
@@ -40,6 +41,9 @@ export class AzureDocumentIntelligenceService {
       const modelId = this.getModelIdForDocumentType(documentType);
       console.log('🔍 [Azure DI] Using model:', modelId);
       
+      let extractedData: ExtractedFieldData;
+      let correctedDocumentType: string | undefined;
+      
       try {
         // Analyze the document with specific tax model
         const poller = await this.client.beginAnalyzeDocument(modelId, documentBuffer);
@@ -48,7 +52,21 @@ export class AzureDocumentIntelligenceService {
         console.log('✅ [Azure DI] Document analysis completed with tax model');
         
         // Extract the data based on document type
-        return this.extractTaxDocumentFields(result, documentType);
+        extractedData = this.extractTaxDocumentFields(result, documentType);
+        
+        // Perform OCR-based document type correction if we have OCR text
+        if (extractedData.fullText) {
+          const ocrBasedType = this.analyzeDocumentTypeFromOCR(extractedData.fullText as string);
+          if (ocrBasedType !== 'UNKNOWN' && ocrBasedType !== documentType) {
+            console.log(`🔄 [Azure DI] Document type correction: ${documentType} → ${ocrBasedType}`);
+            correctedDocumentType = ocrBasedType;
+            
+            // Re-extract data with the corrected document type
+            console.log('🔍 [Azure DI] Re-extracting data with corrected document type...');
+            extractedData = this.extractTaxDocumentFields(result, ocrBasedType);
+          }
+        }
+        
       } catch (modelError: any) {
         console.warn('⚠️ [Azure DI] Tax model failed, attempting fallback to OCR model:', modelError?.message);
         
@@ -66,12 +84,32 @@ export class AzureDocumentIntelligenceService {
           console.log('✅ [Azure DI] Document analysis completed with OCR fallback');
           
           // Extract data using OCR-based approach
-          return this.extractTaxDocumentFieldsFromOCR(fallbackResult, documentType);
+          extractedData = this.extractTaxDocumentFieldsFromOCR(fallbackResult, documentType);
+          
+          // Perform OCR-based document type correction
+          if (extractedData.fullText) {
+            const ocrBasedType = this.analyzeDocumentTypeFromOCR(extractedData.fullText as string);
+            if (ocrBasedType !== 'UNKNOWN' && ocrBasedType !== documentType) {
+              console.log(`🔄 [Azure DI] Document type correction (OCR fallback): ${documentType} → ${ocrBasedType}`);
+              correctedDocumentType = ocrBasedType;
+              
+              // Re-extract data with the corrected document type
+              console.log('🔍 [Azure DI] Re-extracting data with corrected document type...');
+              extractedData = this.extractTaxDocumentFieldsFromOCR(fallbackResult, ocrBasedType);
+            }
+          }
         } else {
           // Re-throw if it's not a model availability issue
           throw modelError;
         }
       }
+      
+      // Add the corrected document type to the result if it was changed
+      if (correctedDocumentType) {
+        extractedData.correctedDocumentType = correctedDocumentType;
+      }
+      
+      return extractedData;
     } catch (error: any) {
       console.error('❌ [Azure DI] Processing error:', error);
       throw new Error(`Azure Document Intelligence processing failed: ${error?.message || 'Unknown error'}`);
@@ -1404,6 +1442,120 @@ export class AzureDocumentIntelligenceService {
     }
     
     console.log('⚠️ [Azure DI] Could not determine form type, defaulting to UNKNOWN');
+    return 'UNKNOWN';
+  }
+
+  /**
+   * Detects specific 1099 subtype from OCR text
+   * Returns the correct document type constant that should be used for processing
+   */
+  public detectSpecific1099Type(ocrText: string): string {
+    console.log('🔍 [Azure DI] Detecting specific 1099 subtype from OCR text...');
+    
+    const text = ocrText.toLowerCase();
+    
+    // Check for specific 1099 form types with high-confidence indicators
+    const formTypePatterns = [
+      {
+        type: 'FORM_1099_DIV',
+        indicators: [
+          'form 1099-div',
+          'dividends and distributions',
+          'ordinary dividends',
+          'qualified dividends',
+          'total capital gain distributions',
+          'capital gain distributions'
+        ]
+      },
+      {
+        type: 'FORM_1099_INT',
+        indicators: [
+          'form 1099-int',
+          'interest income',
+          'early withdrawal penalty',
+          'interest on u.s. savings bonds',
+          'federal income tax withheld'
+        ]
+      },
+      {
+        type: 'FORM_1099_MISC',
+        indicators: [
+          'form 1099-misc',
+          'miscellaneous income',
+          'rents',
+          'royalties',
+          'other income',
+          'fishing boat proceeds',
+          'medical and health care payments'
+        ]
+      },
+      {
+        type: 'FORM_1099_NEC',
+        indicators: [
+          'form 1099-nec',
+          'nonemployee compensation',
+          'non-employee compensation'
+        ]
+      },
+      {
+        type: 'FORM_1099_R',
+        indicators: [
+          'form 1099-r',
+          'distributions from pensions',
+          'retirement plans',
+          'profit-sharing plans'
+        ]
+      },
+      {
+        type: 'FORM_1099_G',
+        indicators: [
+          'form 1099-g',
+          'certain government payments',
+          'unemployment compensation',
+          'state or local income tax refunds'
+        ]
+      }
+    ];
+    
+    // Check each form type pattern
+    for (const pattern of formTypePatterns) {
+      for (const indicator of pattern.indicators) {
+        if (text.includes(indicator)) {
+          console.log(`✅ [Azure DI] Detected ${pattern.type} based on indicator: "${indicator}"`);
+          return pattern.type;
+        }
+      }
+    }
+    
+    // If no specific type detected but it's clearly a 1099, default to MISC
+    if (text.includes('form 1099') || text.includes('payer\'s name') || text.includes('recipient\'s name')) {
+      console.log('⚠️ [Azure DI] Generic 1099 detected, defaulting to FORM_1099_MISC');
+      return 'FORM_1099_MISC';
+    }
+    
+    console.log('⚠️ [Azure DI] No specific 1099 type detected');
+    return 'UNKNOWN';
+  }
+
+  /**
+   * Analyzes OCR text and returns the correct document type
+   * This method can be used to reclassify documents based on their actual content
+   */
+  public analyzeDocumentTypeFromOCR(ocrText: string): string {
+    console.log('🔍 [Azure DI] Analyzing document type from OCR content...');
+    
+    const formType = this.detectFormType(ocrText);
+    
+    if (formType === 'W2') {
+      console.log('✅ [Azure DI] Confirmed W2 document type');
+      return 'W2';
+    } else if (formType === '1099') {
+      const specific1099Type = this.detectSpecific1099Type(ocrText);
+      console.log(`✅ [Azure DI] Detected specific 1099 type: ${specific1099Type}`);
+      return specific1099Type;
+    }
+    
+    console.log('⚠️ [Azure DI] Could not determine document type from OCR');
     return 'UNKNOWN';
   }
 
