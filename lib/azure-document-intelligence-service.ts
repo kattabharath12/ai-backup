@@ -40,14 +40,38 @@ export class AzureDocumentIntelligenceService {
       const modelId = this.getModelIdForDocumentType(documentType);
       console.log('🔍 [Azure DI] Using model:', modelId);
       
-      // Analyze the document
-      const poller = await this.client.beginAnalyzeDocument(modelId, documentBuffer);
-      const result = await poller.pollUntilDone();
-      
-      console.log('✅ [Azure DI] Document analysis completed');
-      
-      // Extract the data based on document type
-      return this.extractTaxDocumentFields(result, documentType);
+      try {
+        // Analyze the document with specific tax model
+        const poller = await this.client.beginAnalyzeDocument(modelId, documentBuffer);
+        const result = await poller.pollUntilDone();
+        
+        console.log('✅ [Azure DI] Document analysis completed with tax model');
+        
+        // Extract the data based on document type
+        return this.extractTaxDocumentFields(result, documentType);
+      } catch (modelError: any) {
+        console.warn('⚠️ [Azure DI] Tax model failed, attempting fallback to OCR model:', modelError?.message);
+        
+        // Check if it's a ModelNotFound error
+        if (modelError?.message?.includes('ModelNotFound') || 
+            modelError?.message?.includes('Resource not found') ||
+            modelError?.code === 'NotFound') {
+          
+          console.log('🔍 [Azure DI] Falling back to prebuilt-read model for OCR extraction...');
+          
+          // Fallback to general OCR model
+          const fallbackPoller = await this.client.beginAnalyzeDocument('prebuilt-read', documentBuffer);
+          const fallbackResult = await fallbackPoller.pollUntilDone();
+          
+          console.log('✅ [Azure DI] Document analysis completed with OCR fallback');
+          
+          // Extract data using OCR-based approach
+          return this.extractTaxDocumentFieldsFromOCR(fallbackResult, documentType);
+        } else {
+          // Re-throw if it's not a model availability issue
+          throw modelError;
+        }
+      }
     } catch (error: any) {
       console.error('❌ [Azure DI] Processing error:', error);
       throw new Error(`Azure Document Intelligence processing failed: ${error?.message || 'Unknown error'}`);
@@ -59,16 +83,40 @@ export class AzureDocumentIntelligenceService {
       case 'W2':
         return 'prebuilt-tax.us.w2';
       case 'FORM_1099_INT':
-        return 'prebuilt-tax.us.1099int';
       case 'FORM_1099_DIV':
-        return 'prebuilt-tax.us.1099div';
       case 'FORM_1099_MISC':
-        return 'prebuilt-tax.us.1099misc';
       case 'FORM_1099_NEC':
-        return 'prebuilt-tax.us.1099nec';
+        // All 1099 variants use the unified 1099 model
+        return 'prebuilt-tax.us.1099';
       default:
         // Use general document model for other types
         return 'prebuilt-document';
+    }
+  }
+
+  private extractTaxDocumentFieldsFromOCR(result: any, documentType: string): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting tax document fields using OCR fallback...');
+    
+    const extractedData: ExtractedFieldData = {};
+    
+    // Extract text content from OCR result
+    extractedData.fullText = result.content || '';
+    
+    // Use OCR-based extraction methods for different document types
+    switch (documentType) {
+      case 'W2':
+        return this.extractW2FieldsFromOCR(extractedData.fullText as string, extractedData);
+      case 'FORM_1099_INT':
+        return this.extract1099IntFieldsFromOCR(extractedData.fullText as string, extractedData);
+      case 'FORM_1099_DIV':
+        return this.extract1099DivFieldsFromOCR(extractedData.fullText as string, extractedData);
+      case 'FORM_1099_MISC':
+        return this.extract1099MiscFieldsFromOCR(extractedData.fullText as string, extractedData);
+      case 'FORM_1099_NEC':
+        return this.extract1099NecFieldsFromOCR(extractedData.fullText as string, extractedData);
+      default:
+        console.log('🔍 [Azure DI] Using generic OCR extraction for document type:', documentType);
+        return this.extractGenericFieldsFromOCR(extractedData.fullText as string, extractedData);
     }
   }
 
@@ -1422,6 +1470,230 @@ export class AzureDocumentIntelligenceService {
     }
     
     return info1099;
+  }
+
+  private extractW2FieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting W2 fields from OCR text...');
+    const personalInfo = this.extractPersonalInfoFromOCR(ocrText);
+    const wages = this.extractWagesFromOCR(ocrText);
+    
+    return {
+      ...baseData,
+      employeeName: personalInfo.name || '',
+      employeeSSN: personalInfo.ssn || '',
+      employeeAddress: personalInfo.address || '',
+      wages: wages || 0,
+      federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
+    };
+  }
+
+  private extract1099IntFieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting 1099-INT fields from OCR text...');
+    const personalInfo = this.extract1099InfoFromOCR(ocrText);
+    
+    return {
+      ...baseData,
+      payerName: personalInfo.payerName || '',
+      payerTIN: personalInfo.payerTIN || '',
+      recipientName: personalInfo.name || '',
+      recipientTIN: personalInfo.tin || '',
+      recipientAddress: personalInfo.address || '',
+      interestIncome: this.extractInterestIncomeFromOCR(ocrText) || 0,
+      federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
+    };
+  }
+
+  private extract1099DivFieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting 1099-DIV fields from OCR text...');
+    const personalInfo = this.extract1099InfoFromOCR(ocrText);
+    
+    return {
+      ...baseData,
+      payerName: personalInfo.payerName || '',
+      payerTIN: personalInfo.payerTIN || '',
+      recipientName: personalInfo.name || '',
+      recipientTIN: personalInfo.tin || '',
+      recipientAddress: personalInfo.address || '',
+      ordinaryDividends: this.extractOrdinaryDividendsFromOCR(ocrText) || 0,
+      qualifiedDividends: this.extractQualifiedDividendsFromOCR(ocrText) || 0,
+      federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
+    };
+  }
+
+  private extract1099MiscFieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting 1099-MISC fields from OCR text...');
+    const personalInfo = this.extract1099InfoFromOCR(ocrText);
+    
+    return {
+      ...baseData,
+      payerName: personalInfo.payerName || '',
+      payerTIN: personalInfo.payerTIN || '',
+      recipientName: personalInfo.name || '',
+      recipientTIN: personalInfo.tin || '',
+      recipientAddress: personalInfo.address || '',
+      rents: this.extractRentsFromOCR(ocrText) || 0,
+      royalties: this.extractRoyaltiesFromOCR(ocrText) || 0,
+      otherIncome: this.extractOtherIncomeFromOCR(ocrText) || 0,
+      nonemployeeCompensation: this.extractNonemployeeCompensationFromOCR(ocrText) || 0,
+      federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
+    };
+  }
+
+  private extract1099NecFieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting 1099-NEC fields from OCR text...');
+    const personalInfo = this.extract1099InfoFromOCR(ocrText);
+    
+    return {
+      ...baseData,
+      payerName: personalInfo.payerName || '',
+      payerTIN: personalInfo.payerTIN || '',
+      recipientName: personalInfo.name || '',
+      recipientTIN: personalInfo.tin || '',
+      recipientAddress: personalInfo.address || '',
+      nonemployeeCompensation: this.extractNonemployeeCompensationFromOCR(ocrText) || 0,
+      federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
+    };
+  }
+
+  private extractGenericFieldsFromOCR(ocrText: string, baseData: ExtractedFieldData): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Extracting generic fields from OCR text...');
+    
+    return {
+      ...baseData,
+      // Add any generic field extraction logic here
+      extractedText: ocrText
+    };
+  }
+
+  // Helper methods for extracting specific amounts from OCR text
+  private extractInterestIncomeFromOCR(ocrText: string): number {
+    const patterns = [
+      /interest\s+income[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+1[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /1\s+interest\s+income[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractOrdinaryDividendsFromOCR(ocrText: string): number {
+    const patterns = [
+      /ordinary\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+1a[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /1a\s+ordinary\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractQualifiedDividendsFromOCR(ocrText: string): number {
+    const patterns = [
+      /qualified\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+1b[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /1b\s+qualified\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractRentsFromOCR(ocrText: string): number {
+    const patterns = [
+      /rents[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+1[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /1\s+rents[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractRoyaltiesFromOCR(ocrText: string): number {
+    const patterns = [
+      /royalties[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+2[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /2\s+royalties[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractOtherIncomeFromOCR(ocrText: string): number {
+    const patterns = [
+      /other\s+income[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+3[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /3\s+other\s+income[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractNonemployeeCompensationFromOCR(ocrText: string): number {
+    const patterns = [
+      /nonemployee\s+compensation[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /non-employee\s+compensation[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+1[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /1\s+nonemployee\s+compensation[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractFederalTaxWithheldFromOCR(ocrText: string): number {
+    const patterns = [
+      /federal\s+income\s+tax\s+withheld[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /federal\s+tax\s+withheld[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+4[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /4\s+federal\s+income\s+tax\s+withheld[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
   }
 
   async processW2Document(documentPathOrBuffer: string | Buffer): Promise<ExtractedFieldData> {
