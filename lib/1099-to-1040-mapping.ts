@@ -110,6 +110,13 @@ export class Form1099ToForm1040Mapper {
       console.log('✅ [1099 MAPPER] Mapped qualified dividends to Line 3a:', form1040Data.line3a);
     }
 
+    // 1099-DIV: Capital Gain Distributions → Line 7 (Capital gains or losses)
+    const totalCapitalGain = this.parseAmount(actual1099Data.totalCapitalGain);
+    if (totalCapitalGain > 0) {
+      form1040Data.line7 = (form1040Data.line7 || 0) + totalCapitalGain;
+      console.log('✅ [1099 MAPPER] Mapped capital gain distributions to Line 7:', form1040Data.line7);
+    }
+
     // 1099-MISC: Various income types
     const rents = this.parseAmount(actual1099Data.rents);
     if (rents > 0) {
@@ -234,6 +241,16 @@ export class Form1099ToForm1040Mapper {
         form1040Line: 'Line 3a',
         form1040Value: this.parseAmount(form1099Data.qualifiedDividends),
         description: 'Qualified dividends'
+      });
+    }
+
+    if (form1099Data.totalCapitalGain) {
+      mappings.push({
+        form1099Field: 'Total Capital Gain Distributions',
+        form1099Value: form1099Data.totalCapitalGain,
+        form1040Line: 'Line 7',
+        form1040Value: this.parseAmount(form1099Data.totalCapitalGain),
+        description: 'Capital gain distributions'
       });
     }
 
@@ -534,6 +551,7 @@ export class Form1099ToForm1040Mapper {
     const hasIncomeData = form1099Data.interestIncome || 
                          form1099Data.ordinaryDividends || 
                          form1099Data.qualifiedDividends ||
+                         form1099Data.totalCapitalGain ||
                          form1099Data.rents || 
                          form1099Data.royalties || 
                          form1099Data.otherIncome ||
