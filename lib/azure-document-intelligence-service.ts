@@ -1342,7 +1342,33 @@ export class AzureDocumentIntelligenceService {
     
     const text = ocrText.toLowerCase();
     
-    // W2 form indicators (check first as they're more specific)
+    // Check for specific 1099 form indicators first (more specific than W2)
+    const specific1099Indicators = [
+      'form 1099-div',
+      'form 1099-int',
+      'form 1099-misc',
+      'form 1099-nec',
+      'form 1099-r',
+      'form 1099-g',
+      'dividends and distributions',
+      'interest income',
+      'miscellaneous income',
+      'nonemployee compensation',
+      'payer\'s name',
+      'payer\'s federal identification number',
+      'recipient\'s identification number',
+      'recipient\'s name'
+    ];
+    
+    // Check for specific 1099 indicators first
+    for (const indicator of specific1099Indicators) {
+      if (text.includes(indicator)) {
+        console.log('✅ [Azure DI] Detected 1099 form based on indicator:', indicator);
+        return '1099';
+      }
+    }
+    
+    // W2 form indicators (check after 1099 to avoid false positives)
     const w2Indicators = [
       'form w-2',
       'form w2',
@@ -1350,26 +1376,12 @@ export class AzureDocumentIntelligenceService {
       'employee\'s social security number',
       'employer identification number',
       'wages, tips, other compensation',
-      'federal income tax withheld',
       'social security wages',
-      'medicare wages'
+      'medicare wages',
+      'employee\'s first name and initial'
     ];
     
-    // 1099 form indicators
-    const form1099Indicators = [
-      'form 1099',
-      'form 1099-',
-      'payer\'s name',
-      'payer\'s federal identification number',
-      'recipient\'s identification number',
-      'recipient\'s name',
-      'miscellaneous income',
-      'interest income',
-      'dividend income',
-      'nonemployee compensation'
-    ];
-    
-    // Check for W2 indicators first
+    // Check for W2 indicators
     for (const indicator of w2Indicators) {
       if (text.includes(indicator)) {
         console.log('✅ [Azure DI] Detected W2 form based on indicator:', indicator);
@@ -1377,10 +1389,16 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
-    // Check for 1099 indicators
-    for (const indicator of form1099Indicators) {
+    // Generic 1099 form indicators (fallback)
+    const generic1099Indicators = [
+      'form 1099',
+      'form 1099-'
+    ];
+    
+    // Check for generic 1099 indicators as fallback
+    for (const indicator of generic1099Indicators) {
       if (text.includes(indicator)) {
-        console.log('✅ [Azure DI] Detected 1099 form based on indicator:', indicator);
+        console.log('✅ [Azure DI] Detected 1099 form based on generic indicator:', indicator);
         return '1099';
       }
     }
@@ -1663,6 +1681,7 @@ export class AzureDocumentIntelligenceService {
       recipientAddress: personalInfo.address || '',
       ordinaryDividends: this.extractOrdinaryDividendsFromOCR(ocrText) || 0,
       qualifiedDividends: this.extractQualifiedDividendsFromOCR(ocrText) || 0,
+      totalCapitalGain: this.extractCapitalGainDistributionsFromOCR(ocrText) || 0,
       federalTaxWithheld: this.extractFederalTaxWithheldFromOCR(ocrText) || 0
     };
   }
@@ -1750,6 +1769,25 @@ export class AzureDocumentIntelligenceService {
       /qualified\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i,
       /box\s+1b[:\s]+\$?([0-9,]+\.?\d*)/i,
       /1b\s+qualified\s+dividends[:\s]+\$?([0-9,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        return this.parseAmount(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  private extractCapitalGainDistributionsFromOCR(ocrText: string): number {
+    const patterns = [
+      /capital\s+gain\s+distributions[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /total\s+capital\s+gain\s+distributions[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /box\s+2a[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /2a\s+capital\s+gain\s+distributions[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /2a\s+total\s+capital\s+gain\s+distributions[:\s]+\$?([0-9,]+\.?\d*)/i,
+      /2a\s+Total\s+capital\s+gain\s+distributions[:\s]+\$?([0-9,]+\.?\d*)/i
     ];
     
     for (const pattern of patterns) {
