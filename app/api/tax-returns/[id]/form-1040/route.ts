@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { W2ToForm1040Mapper } from "@/lib/w2-to-1040-mapping";
+import { Form1099ToForm1040Mapper } from "@/lib/1099-to-1040-mapping";
 import { Form1040Data } from "@/lib/form-1040-types";
 
 export const dynamic = "force-dynamic";
@@ -44,8 +45,13 @@ export async function GET(
         dependents: true,
         documents: {
           where: { 
-            documentType: 'W2',
-            processingStatus: 'COMPLETED'
+            OR: [
+              { documentType: 'W2', processingStatus: 'COMPLETED' },
+              { documentType: 'FORM_1099_INT', processingStatus: 'COMPLETED' },
+              { documentType: 'FORM_1099_DIV', processingStatus: 'COMPLETED' },
+              { documentType: 'FORM_1099_MISC', processingStatus: 'COMPLETED' },
+              { documentType: 'FORM_1099_NEC', processingStatus: 'COMPLETED' }
+            ]
           },
           include: {
             extractedEntries: true
@@ -65,9 +71,13 @@ export async function GET(
     // If there's saved 1040 data in a separate table or JSON field, load it
     // For now, we'll construct it from the tax return data
     
-    // Get W2 documents and their extracted data
+    // Get W2 and 1099 documents and their extracted data
     const w2Documents = taxReturn.documents.filter((doc: any) => doc.documentType === 'W2');
+    const form1099Documents = taxReturn.documents.filter((doc: any) => 
+      ['FORM_1099_INT', 'FORM_1099_DIV', 'FORM_1099_MISC', 'FORM_1099_NEC'].includes(doc.documentType)
+    );
     const w2MappingData = [];
+    const form1099MappingData = [];
 
     // Process each W2 document and map to 1040 form
     console.log(`🔍 [1040 GET] Processing ${w2Documents.length} W2 documents`);
@@ -142,6 +152,83 @@ export async function GET(
         console.log(`✅ [1040 GET] Successfully processed W2 document: ${w2Doc.fileName}`);
       } else {
         console.log(`⚠️ [1040 GET] W2 document ${w2Doc.fileName} has no extractedData or invalid format`);
+      }
+    }
+
+    // Process each 1099 document and map to 1040 form
+    console.log(`🔍 [1040 GET] Processing ${form1099Documents.length} 1099 documents`);
+    
+    for (const form1099Doc of form1099Documents) {
+      console.log(`🔍 [1040 GET] Processing 1099 document: ${form1099Doc.fileName} (ID: ${form1099Doc.id})`);
+      console.log(`🔍 [1040 GET] 1099 document extractedData:`, JSON.stringify(form1099Doc.extractedData, null, 2));
+      
+      if (form1099Doc.extractedData && typeof form1099Doc.extractedData === 'object') {
+        const extractedData = form1099Doc.extractedData as any;
+        
+        // Try different data structure paths
+        let form1099DataToMap = extractedData.extractedData || extractedData;
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🔍 [1040 GET] 1099 data to map to 1040:`, JSON.stringify(form1099DataToMap, null, 2));
+          console.log(`🔍 [1040 GET] Current form1040Data before 1099 mapping:`, JSON.stringify(form1040Data, null, 2));
+        }
+        
+        // DEBUG: Check for personal info fields in the 1099 data
+        console.log(`🔍 [1040 GET DEBUG] Checking 1099 personal info fields:`);
+        console.log(`  - recipientName: ${form1099DataToMap.recipientName}`);
+        console.log(`  - Recipient?.Name: ${form1099DataToMap.Recipient?.Name}`);
+        console.log(`  - Recipient.Name: ${form1099DataToMap['Recipient.Name']}`);
+        console.log(`  - recipientTIN: ${form1099DataToMap.recipientTIN}`);
+        console.log(`  - Recipient?.TIN: ${form1099DataToMap.Recipient?.TIN}`);
+        console.log(`  - Recipient.TIN: ${form1099DataToMap['Recipient.TIN']}`);
+        console.log(`  - recipientAddress: ${form1099DataToMap.recipientAddress}`);
+        console.log(`  - Recipient?.Address: ${form1099DataToMap.Recipient?.Address}`);
+        console.log(`  - Recipient.Address: ${form1099DataToMap['Recipient.Address']}`);
+        
+        // Map 1099 data to 1040 form fields
+        const mappedData = Form1099ToForm1040Mapper.map1099ToForm1040(
+          form1099DataToMap, 
+          form1040Data
+        );
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🔍 [1040 GET] Mapped data from 1099:`, JSON.stringify(mappedData, null, 2));
+        }
+        
+        // DEBUG: Check if personalInfo was updated in mappedData
+        if (mappedData.personalInfo) {
+          console.log(`✅ [1040 GET DEBUG] personalInfo was updated by 1099:`, JSON.stringify(mappedData.personalInfo, null, 2));
+        } else {
+          console.log(`❌ [1040 GET DEBUG] personalInfo was NOT updated by 1099 mapping`);
+        }
+        
+        // Merge the mapped data
+        form1040Data = { ...form1040Data, ...mappedData };
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🔍 [1040 GET] Form1040Data after merging 1099:`, JSON.stringify(form1040Data, null, 2));
+        }
+        
+        // DEBUG: Check if personalInfo exists in final form1040Data after 1099
+        if (form1040Data.personalInfo) {
+          console.log(`✅ [1040 GET DEBUG] personalInfo exists in form1040Data after 1099:`, JSON.stringify(form1040Data.personalInfo, null, 2));
+        } else {
+          console.log(`❌ [1040 GET DEBUG] personalInfo is MISSING from form1040Data after 1099`);
+        }
+        
+        // Create mapping summary
+        const mappingSummary = Form1099ToForm1040Mapper.createMappingSummary(form1099DataToMap);
+        
+        form1099MappingData.push({
+          documentId: form1099Doc.id,
+          fileName: form1099Doc.fileName,
+          documentType: form1099Doc.documentType,
+          mappings: mappingSummary
+        });
+        
+        console.log(`✅ [1040 GET] Successfully processed 1099 document: ${form1099Doc.fileName}`);
+      } else {
+        console.log(`⚠️ [1040 GET] 1099 document ${form1099Doc.fileName} has no extractedData or invalid format`);
       }
     }
 
@@ -232,6 +319,7 @@ export async function GET(
     return NextResponse.json({
       form1040Data,
       w2MappingData,
+      form1099MappingData,
       taxReturn: {
         id: taxReturn.id,
         taxYear: taxReturn.taxYear,
