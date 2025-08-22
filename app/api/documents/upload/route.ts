@@ -18,7 +18,9 @@ export async function POST(request: Request) {
     
     if (!session?.user?.email) {
       console.log("❌ [UPLOAD] No session or email found")
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ 
+        error: "Authentication required. Please log in to upload documents." 
+      }, { status: 401 })
     }
     console.log("✅ [UPLOAD] Session found for email:", session.user.email)
 
@@ -121,6 +123,16 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("💥 [UPLOAD] Document upload error:", error)
     console.error("💥 [UPLOAD] Error stack:", error instanceof Error ? error.stack : 'No stack trace')
+    
+    // Return more specific error information in development
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace'
+      }, { status: 500 })
+    }
+    
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
@@ -153,8 +165,8 @@ function determineDocumentType(fileName: string): any {
     return 'FORM_1099_G'
   }
   if (lowerName.includes('1099')) {
-    // For generic 1099 files, we'll let the LLM determine the specific type
-    return 'FORM_1099_GENERIC'
+    // For generic 1099 files, default to MISC type
+    return 'FORM_1099_MISC'
   }
   
   return 'UNKNOWN'
