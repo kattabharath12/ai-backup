@@ -83,18 +83,33 @@ export async function POST(
 
     console.log("🔍 [PROCESS] Step 6: Processing with Azure Document Intelligence...")
     let extractedTaxData: any;
+    let finalDocumentType = document.documentType;
     
     try {
       const azureService = getAzureDocumentIntelligenceService();
       const extractedData = await azureService.extractDataFromDocument(document.filePath, document.documentType);
       
+      // Check if document type was corrected based on OCR analysis
+      if (extractedData.correctedDocumentType) {
+        console.log(`🔄 [PROCESS] Document type corrected: ${document.documentType} → ${extractedData.correctedDocumentType}`);
+        finalDocumentType = extractedData.correctedDocumentType;
+        
+        // Update the document type in the database
+        await prisma.document.update({
+          where: { id: params.id },
+          data: { documentType: finalDocumentType }
+        });
+        console.log("✅ [PROCESS] Document type updated in database");
+      }
+      
       extractedTaxData = {
-        documentType: document.documentType,
+        documentType: finalDocumentType,
         ocrText: extractedData.fullText || '',
         extractedData: extractedData,
         confidence: 0.95 // Azure typically has high confidence
       };
       console.log("✅ [PROCESS] Azure Document Intelligence processing completed")
+      console.log("✅ [PROCESS] Final document type:", finalDocumentType)
     } catch (azureError) {
       console.error('❌ [PROCESS] Azure Document Intelligence processing failed:', azureError);
       await prisma.document.update({
@@ -230,4 +245,5 @@ export async function POST(
     )
   }
 }
+
 
