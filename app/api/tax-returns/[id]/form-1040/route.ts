@@ -242,50 +242,50 @@ export async function GET(
       // Map income entries to 1040 form lines based on income type
       switch (incomeEntry.incomeType) {
         case 'W2_WAGES':
-          form1040Data.line1 = (form1040Data.line1 || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line1 = (form1040Data.line1 || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added W2 wages to Line 1: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'INTEREST':
-          form1040Data.line2b = (form1040Data.line2b || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line2b = (form1040Data.line2b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added interest income to Line 2b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'DIVIDENDS':
-          form1040Data.line3b = (form1040Data.line3b || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line3b = (form1040Data.line3b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added dividend income to Line 3b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'OTHER_INCOME':
-          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added other income to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'UNEMPLOYMENT':
-          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added unemployment income to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'RETIREMENT_DISTRIBUTIONS':
-          form1040Data.line4b = (form1040Data.line4b || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line4b = (form1040Data.line4b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added retirement distributions to Line 4b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'SOCIAL_SECURITY':
-          form1040Data.line5b = (form1040Data.line5b || 0) + (incomeEntry.amount || 0);
+          form1040Data.line5b = (form1040Data.line5b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
           console.log(`✅ [1040 GET] Added social security benefits to Line 5b: $${incomeEntry.amount}`);
           break;
           
         default:
           // Default to other income (Line 8) for unknown types
-          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
-          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
           console.log(`✅ [1040 GET] Added unknown income type '${incomeEntry.incomeType}' to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
       }
