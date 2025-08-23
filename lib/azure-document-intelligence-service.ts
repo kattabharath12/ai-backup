@@ -474,26 +474,68 @@ export class AzureDocumentIntelligenceService {
   private process1099MiscFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
     const data = { ...baseData };
     
+    // Comprehensive field mappings for all 1099-MISC boxes
     const fieldMappings = {
+      // Payer and recipient information
       'Payer.Name': 'payerName',
       'Payer.TIN': 'payerTIN',
       'Payer.Address': 'payerAddress',
       'Recipient.Name': 'recipientName',
       'Recipient.TIN': 'recipientTIN',
       'Recipient.Address': 'recipientAddress',
-      'Rents': 'rents',
-      'Royalties': 'royalties',
-      'OtherIncome': 'otherIncome',
-      'FederalIncomeTaxWithheld': 'federalTaxWithheld',
-      'FishingBoatProceeds': 'fishingBoatProceeds',
-      'MedicalAndHealthCarePayments': 'medicalHealthPayments',
-      'NonemployeeCompensation': 'nonemployeeCompensation'
+      'AccountNumber': 'accountNumber',
+      
+      // Box 1-18 mappings
+      'Rents': 'rents',                                           // Box 1
+      'Royalties': 'royalties',                                   // Box 2
+      'OtherIncome': 'otherIncome',                              // Box 3
+      'FederalIncomeTaxWithheld': 'federalTaxWithheld',          // Box 4
+      'FishingBoatProceeds': 'fishingBoatProceeds',              // Box 5
+      'MedicalAndHealthCarePayments': 'medicalHealthPayments',    // Box 6
+      'NonemployeeCompensation': 'nonemployeeCompensation',       // Box 7 (deprecated)
+      'SubstitutePayments': 'substitutePayments',                 // Box 8
+      'CropInsuranceProceeds': 'cropInsuranceProceeds',          // Box 9
+      'GrossProceedsPaidToAttorney': 'attorneyProceeds',         // Box 10
+      'FishPurchasedForResale': 'fishPurchases',                 // Box 11
+      'Section409ADeferrals': 'section409ADeferrals',            // Box 12
+      'ExcessGoldenParachutePayments': 'excessGoldenParachutePayments', // Box 13
+      'NonqualifiedDeferredCompensation': 'nonqualifiedDeferredCompensation', // Box 14
+      'Section409AIncome': 'section409AIncome',                  // Box 15a
+      'StateTaxWithheld': 'stateTaxWithheld',                    // Box 16
+      'StatePayerNumber': 'statePayerNumber',                    // Box 17
+      'StateIncome': 'stateIncome',                              // Box 18
+      
+      // Alternative field names that Azure might use
+      'Box1': 'rents',
+      'Box2': 'royalties',
+      'Box3': 'otherIncome',
+      'Box4': 'federalTaxWithheld',
+      'Box5': 'fishingBoatProceeds',
+      'Box6': 'medicalHealthPayments',
+      'Box7': 'nonemployeeCompensation',
+      'Box8': 'substitutePayments',
+      'Box9': 'cropInsuranceProceeds',
+      'Box10': 'attorneyProceeds',
+      'Box11': 'fishPurchases',
+      'Box12': 'section409ADeferrals',
+      'Box13': 'excessGoldenParachutePayments',
+      'Box14': 'nonqualifiedDeferredCompensation',
+      'Box15a': 'section409AIncome',
+      'Box16': 'stateTaxWithheld',
+      'Box17': 'statePayerNumber',
+      'Box18': 'stateIncome'
     };
     
     for (const [azureFieldName, mappedFieldName] of Object.entries(fieldMappings)) {
       if (fields[azureFieldName]?.value !== undefined) {
         const value = fields[azureFieldName].value;
-        data[mappedFieldName] = typeof value === 'number' ? value : this.parseAmount(value);
+        
+        // Handle text fields vs numeric fields
+        if (mappedFieldName === 'statePayerNumber' || mappedFieldName === 'accountNumber') {
+          data[mappedFieldName] = String(value).trim();
+        } else {
+          data[mappedFieldName] = typeof value === 'number' ? value : this.parseAmount(value);
+        }
       }
     }
     
@@ -525,6 +567,38 @@ export class AzureDocumentIntelligenceService {
       if (!data.payerTIN && personalInfoFromOCR.payerTIN) {
         data.payerTIN = personalInfoFromOCR.payerTIN;
         console.log('✅ [Azure DI] Extracted payer TIN from OCR:', data.payerTIN);
+      }
+      
+      if (!data.payerAddress && personalInfoFromOCR.payerAddress) {
+        data.payerAddress = personalInfoFromOCR.payerAddress;
+        console.log('✅ [Azure DI] Extracted payer address from OCR:', data.payerAddress);
+      }
+    }
+    
+    // OCR fallback for missing box amounts
+    if (baseData.fullText) {
+      const missingFields = [];
+      const expectedFields = ['rents', 'royalties', 'otherIncome', 'federalTaxWithheld', 'fishingBoatProceeds', 
+                             'medicalHealthPayments', 'substitutePayments', 'cropInsuranceProceeds', 'attorneyProceeds',
+                             'fishPurchases', 'section409ADeferrals', 'excessGoldenParachutePayments', 
+                             'nonqualifiedDeferredCompensation', 'section409AIncome', 'stateTaxWithheld', 'stateIncome'];
+      
+      for (const field of expectedFields) {
+        if (!data[field] || data[field] === 0) {
+          missingFields.push(field);
+        }
+      }
+      
+      if (missingFields.length > 0) {
+        console.log(`🔍 [Azure DI] Missing ${missingFields.length} fields from structured extraction, attempting OCR fallback...`);
+        const ocrData = this.extract1099MiscFieldsFromOCR(baseData.fullText as string, {});
+        
+        for (const field of missingFields) {
+          if (ocrData[field] && ocrData[field] !== 0) {
+            data[field] = ocrData[field];
+            console.log(`✅ [Azure DI] Recovered ${field} from OCR: ${ocrData[field]}`);
+          }
+        }
       }
     }
     
@@ -1530,41 +1604,186 @@ export class AzureDocumentIntelligenceService {
     if (personalInfo.address) data.recipientAddress = personalInfo.address;
     if (personalInfo.payerName) data.payerName = personalInfo.payerName;
     if (personalInfo.payerTIN) data.payerTIN = personalInfo.payerTIN;
+    if (personalInfo.payerAddress) data.payerAddress = personalInfo.payerAddress;
     
-    // Extract 1099-MISC specific amounts
+    // Extract account number if present
+    const accountNumberPatterns = [
+      /Account\s+number[:\s]*([A-Z0-9\-]+)/i,
+      /Acct\s*#[:\s]*([A-Z0-9\-]+)/i,
+      /Account[:\s]*([A-Z0-9\-]+)/i
+    ];
+    
+    for (const pattern of accountNumberPatterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        data.accountNumber = match[1].trim();
+        console.log(`✅ [Azure DI OCR] Found account number: ${data.accountNumber}`);
+        break;
+      }
+    }
+    
+    // Comprehensive 1099-MISC box patterns (boxes 1-18)
     const amountPatterns = {
+      // Box 1 - Rents
       rents: [
         /1\s+Rents\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*1\s+\$?([0-9,]+\.?\d{0,2})/m
+        /(?:^|\n)\s*1\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*1[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 2 - Royalties
       royalties: [
         /2\s+Royalties\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*2\s+\$?([0-9,]+\.?\d{0,2})/m
+        /(?:^|\n)\s*2\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*2[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 3 - Other income
       otherIncome: [
         /3\s+Other\s+income\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*3\s+\$?([0-9,]+\.?\d{0,2})/m
+        /(?:^|\n)\s*3\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*3[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 4 - Federal income tax withheld
       federalTaxWithheld: [
         /4\s+Federal\s+income\s+tax\s+withheld\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*4\s+\$?([0-9,]+\.?\d{0,2})/m
+        /(?:^|\n)\s*4\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*4[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 5 - Fishing boat proceeds
+      fishingBoatProceeds: [
+        /5\s+Fishing\s+boat\s+proceeds\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*5\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*5[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 6 - Medical and health care payments
+      medicalHealthPayments: [
+        /6\s+Medical\s+and\s+health\s+care\s+payments\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /6\s+Medical\s+payments\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*6\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*6[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 7 - Nonemployee compensation (deprecated but may still appear)
+      nonemployeeCompensation: [
+        /7\s+Nonemployee\s+compensation\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*7\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*7[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 8 - Substitute payments in lieu of dividends or interest
+      substitutePayments: [
+        /8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /8\s+Substitute\s+payments\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*8\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*8[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 9 - Crop insurance proceeds
+      cropInsuranceProceeds: [
+        /9\s+Crop\s+insurance\s+proceeds\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*9\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*9[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 10 - Gross proceeds paid to an attorney
+      attorneyProceeds: [
+        /10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /10\s+Attorney\s+proceeds\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*10\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*10[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 11 - Fish purchased for resale
+      fishPurchases: [
+        /11\s+Fish\s+purchased\s+for\s+resale\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*11\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*11[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 12 - Section 409A deferrals
+      section409ADeferrals: [
+        /12\s+Section\s+409A\s+deferrals\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*12\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*12[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 13 - Excess golden parachute payments
+      excessGoldenParachutePayments: [
+        /13\s+Excess\s+golden\s+parachute\s+payments\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*13\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*13[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 14 - Nonqualified deferred compensation
+      nonqualifiedDeferredCompensation: [
+        /14\s+Nonqualified\s+deferred\s+compensation\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*14\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*14[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 15a - Section 409A income
+      section409AIncome: [
+        /15a\s+Section\s+409A\s+income\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*15a\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*15a[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 16 - State tax withheld
+      stateTaxWithheld: [
+        /16\s+State\s+tax\s+withheld\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*16\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*16[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 17 - State/Payer's state no.
+      statePayerNumber: [
+        /17\s+State\/Payer's\s+state\s+no\.\s*[\n\s]*([A-Z0-9\-]+)/i,
+        /(?:^|\n)\s*17\s+([A-Z0-9\-]+)/m,
+        /Box\s*17[:\s]*([A-Z0-9\-]+)/i
+      ],
+      // Box 18 - State income
+      stateIncome: [
+        /18\s+State\s+income\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*18\s+\$?([0-9,]+\.?\d{0,2})/m,
+        /Box\s*18[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ]
     };
     
+    // Extract all box amounts
     for (const [fieldName, patterns] of Object.entries(amountPatterns)) {
       for (const pattern of patterns) {
         const match = ocrText.match(pattern);
         if (match && match[1]) {
-          const amountStr = match[1].replace(/,/g, '');
-          const amount = parseFloat(amountStr);
+          let value: string | number = match[1];
           
-          if (!isNaN(amount) && amount >= 0) {
-            data[fieldName] = amount;
-            console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
-            break;
+          // Handle numeric fields
+          if (fieldName !== 'statePayerNumber') {
+            const amountStr = match[1].replace(/,/g, '');
+            const amount = parseFloat(amountStr);
+            
+            if (!isNaN(amount) && amount >= 0) {
+              value = amount;
+              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
+            } else {
+              continue; // Skip invalid amounts
+            }
+          } else {
+            // Handle text fields like state payer number
+            value = match[1].trim();
+            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value}`);
           }
+          
+          data[fieldName] = value;
+          break;
         }
       }
+    }
+    
+    // Extract additional medical payment amounts (Box 6 can have multiple values)
+    const medicalPaymentPattern = /medical.*?payments?.*?\$?([0-9,]+\.?\d{0,2})/gi;
+    const medicalPayments = [];
+    let medicalMatch;
+    
+    while ((medicalMatch = medicalPaymentPattern.exec(ocrText)) !== null) {
+      const amountStr = medicalMatch[1].replace(/,/g, '');
+      const amount = parseFloat(amountStr);
+      
+      if (!isNaN(amount) && amount > 0) {
+        medicalPayments.push(amount);
+      }
+    }
+    
+    if (medicalPayments.length > 1) {
+      data.medicalPaymentsMultiple = medicalPayments;
+      console.log(`✅ [Azure DI OCR] Found multiple medical payments: ${medicalPayments.join(', ')}`);
     }
     
     return data;
