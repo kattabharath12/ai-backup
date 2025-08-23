@@ -71,7 +71,10 @@ export async function POST(
         data: {
           documentId: document.id,
           documentType: document.documentType,
-          extractedEntries: existingEntries
+          extractedData: document.extractedData, // Include raw extracted data for frontend processing
+          extractedEntries: existingEntries,
+          ocrText: document.ocrText,
+          confidence: 0.95 // Default confidence for already processed documents
         }
       })
     }
@@ -286,9 +289,11 @@ export async function POST(
       data: {
         documentId: document.id,
         documentType: finalDocumentType,
+        extractedData: extractedTaxData.extractedData, // Include raw extracted data for frontend processing
         extractedEntries: extractedEntries,
         duplicateInfo: duplicateInfo,
-        ocrText: extractedTaxData.ocrText
+        ocrText: extractedTaxData.ocrText,
+        confidence: extractedTaxData.confidence
       }
     })
 
