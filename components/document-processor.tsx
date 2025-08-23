@@ -252,7 +252,7 @@ export function DocumentProcessor({
 
       onDocumentUploaded?.(document)
 
-      // Processing phase
+      // Processing phase - Use direct API call instead of streaming for better reliability
       const processResponse = await fetch(`/api/documents/${document.id}/process`, {
         method: 'POST'
       })
@@ -261,77 +261,127 @@ export function DocumentProcessor({
         throw new Error('Failed to process document')
       }
 
-      const reader = processResponse.body?.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let currentProgress = 50
-
-      while (reader) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
+      // Check if response is streaming or direct JSON
+      const contentType = processResponse.headers.get('content-type')
+      
+      if (contentType?.includes('application/json')) {
+        // Direct JSON response - processing completed immediately
+        const result = await processResponse.json()
         
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') {
-              // Processing complete
-              try {
-                const extractedData = JSON.parse(buffer)
-                
-                // Check for duplicate detection
-                if (extractedData.duplicateDetection && extractedData.duplicateDetection.isDuplicate) {
-                  console.log('🔍 [DUPLICATE] Duplicate detected for document:', file.name)
-                  updateDocumentState({
-                    status: 'duplicate_warning',
-                    progress: 100,
-                    message: 'Potential duplicate detected - user action required',
-                    extractedData,
-                    duplicateDetection: extractedData.duplicateDetection
-                  })
-                  
-                  // Show duplicate warning dialog
-                  setDuplicateWarning({
-                    open: true,
-                    documentIndex: index,
-                    documentData: {
-                      file,
-                      document,
-                      extractedData
-                    }
-                  })
-                } else {
-                  // No duplicates, complete normally
-                  updateDocumentState({
-                    status: 'completed',
-                    progress: 100,
-                    message: 'Document processed successfully',
-                    extractedData
-                  })
-                  onDocumentProcessed(extractedData)
-                }
-                return
-              } catch (error) {
-                throw new Error('Failed to parse extracted data')
-              }
-            }
+        if (result.success) {
+          // Check for duplicate detection
+          if (result.data?.duplicateInfo?.isDuplicate) {
+            console.log('🔍 [DUPLICATE] Duplicate detected for document:', file.name)
+            updateDocumentState({
+              status: 'duplicate_warning',
+              progress: 100,
+              message: 'Potential duplicate detected - user action required',
+              extractedData: result.data,
+              duplicateDetection: result.data.duplicateInfo
+            })
             
-            try {
-              const parsed = JSON.parse(data)
-              buffer += parsed.content
-              currentProgress = Math.min(95, currentProgress + 5)
-              updateDocumentState({
-                progress: currentProgress,
-                message: 'Analyzing document content...'
-              })
-            } catch (e) {
-              // Skip invalid JSON
+            // Show duplicate warning dialog
+            setDuplicateWarning({
+              open: true,
+              documentIndex: index,
+              documentData: {
+                file,
+                document,
+                extractedData: result.data
+              }
+            })
+          } else {
+            // No duplicates, complete normally
+            updateDocumentState({
+              status: 'completed',
+              progress: 100,
+              message: 'Document processed successfully',
+              extractedData: result.data
+            })
+            onDocumentProcessed(result.data)
+          }
+        } else {
+          throw new Error(result.error || 'Processing failed')
+        }
+      } else {
+        // Streaming response - handle as before but with better error handling
+        const reader = processResponse.body?.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let currentProgress = 50
+
+        while (reader) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6)
+              if (data === '[DONE]') {
+                // Processing complete
+                try {
+                  const extractedData = JSON.parse(buffer)
+                  
+                  // Check for duplicate detection
+                  if (extractedData.duplicateDetection && extractedData.duplicateDetection.isDuplicate) {
+                    console.log('🔍 [DUPLICATE] Duplicate detected for document:', file.name)
+                    updateDocumentState({
+                      status: 'duplicate_warning',
+                      progress: 100,
+                      message: 'Potential duplicate detected - user action required',
+                      extractedData,
+                      duplicateDetection: extractedData.duplicateDetection
+                    })
+                    
+                    // Show duplicate warning dialog
+                    setDuplicateWarning({
+                      open: true,
+                      documentIndex: index,
+                      documentData: {
+                        file,
+                        document,
+                        extractedData
+                      }
+                    })
+                  } else {
+                    // No duplicates, complete normally
+                    updateDocumentState({
+                      status: 'completed',
+                      progress: 100,
+                      message: 'Document processed successfully',
+                      extractedData
+                    })
+                    onDocumentProcessed(extractedData)
+                  }
+                  return
+                } catch (error) {
+                  throw new Error('Failed to parse extracted data')
+                }
+              }
+              
+              try {
+                const parsed = JSON.parse(data)
+                buffer += parsed.content
+                currentProgress = Math.min(95, currentProgress + 5)
+                updateDocumentState({
+                  progress: currentProgress,
+                  message: 'Analyzing document content...'
+                })
+              } catch (e) {
+                // Skip invalid JSON
+              }
             }
           }
         }
       }
+
+      // If we reach here without completing, there might be an issue
+      // Let's poll the document status to get the final result
+      console.log('🔍 [FALLBACK] Polling document status for final result...')
+      await pollDocumentStatus(document.id, index, updateDocumentState)
 
     } catch (error) {
       console.error('Document processing error:', error)
@@ -341,6 +391,68 @@ export function DocumentProcessor({
         message: error instanceof Error ? error.message : 'An error occurred during processing'
       })
     }
+  }
+
+  // Fallback polling function to get final document status
+  const pollDocumentStatus = async (documentId: string, index: number, updateDocumentState: (updates: Partial<ProcessedDocument>) => void) => {
+    const maxAttempts = 30 // 30 seconds max
+    let attempts = 0
+    
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/documents/${documentId}`)
+        if (response.ok) {
+          const document = await response.json()
+          
+          if (document.processingStatus === 'COMPLETED') {
+            updateDocumentState({
+              status: 'completed',
+              progress: 100,
+              message: 'Document processed successfully',
+              extractedData: document.extractedData
+            })
+            if (document.extractedData) {
+              onDocumentProcessed(document.extractedData)
+            }
+            return true
+          } else if (document.processingStatus === 'FAILED') {
+            updateDocumentState({
+              status: 'error',
+              progress: 0,
+              message: 'Document processing failed'
+            })
+            return true
+          } else if (document.processingStatus === 'PROCESSING' && attempts < maxAttempts) {
+            // Still processing, continue polling
+            attempts++
+            setTimeout(poll, 1000)
+            return false
+          } else {
+            // Timeout or unknown status
+            updateDocumentState({
+              status: 'error',
+              progress: 0,
+              message: 'Processing timeout - please try again'
+            })
+            return true
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+        if (attempts < maxAttempts) {
+          attempts++
+          setTimeout(poll, 1000)
+        } else {
+          updateDocumentState({
+            status: 'error',
+            progress: 0,
+            message: 'Failed to get processing status'
+          })
+        }
+      }
+    }
+    
+    await poll()
   }
 
   const getDocumentTypeLabel = (documentType: string) => {
