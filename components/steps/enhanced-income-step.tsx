@@ -417,6 +417,12 @@ export function EnhancedIncomeStep({
             <DocumentProcessor
               taxReturnId={taxReturn.id}
               onDocumentProcessed={handleDocumentProcessed}
+              onUploadMoreRequested={() => {
+                // Clear pending auto entries when user wants to upload more documents
+                setPendingAutoEntries([])
+                // Close any open name validation dialog
+                setNameValidationDialog(prev => ({ ...prev, isOpen: false }))
+              }}
             />
           </CardContent>
         </Card>
