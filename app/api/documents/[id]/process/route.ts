@@ -416,27 +416,54 @@ async function process1099DivDocument(extractedData: ExtractedFieldData): Promis
 async function process1099MiscDocument(extractedData: ExtractedFieldData): Promise<any[]> {
     const entries = [];
     
+    // Comprehensive field mappings for all 1099-MISC boxes and information
     const fieldMappings = {
+      // Payer and recipient information
       'payerName': 'Payer Name',
       'payerTIN': 'Payer TIN',
       'payerAddress': 'Payer Address',
       'recipientName': 'Recipient Name',
       'recipientTIN': 'Recipient TIN',
       'recipientAddress': 'Recipient Address',
+      'accountNumber': 'Account Number',
+      
+      // Box 1-18 mappings
       'rents': 'Box 1 - Rents',
       'royalties': 'Box 2 - Royalties',
       'otherIncome': 'Box 3 - Other Income',
-      'federalTaxWithheld': 'Box 4 - Federal Tax Withheld',
+      'federalTaxWithheld': 'Box 4 - Federal Income Tax Withheld',
       'fishingBoatProceeds': 'Box 5 - Fishing Boat Proceeds',
       'medicalHealthPayments': 'Box 6 - Medical and Health Care Payments',
-      'nonemployeeCompensation': 'Box 7 - Nonemployee Compensation'
+      'nonemployeeCompensation': 'Box 7 - Nonemployee Compensation',
+      'substitutePayments': 'Box 8 - Substitute Payments in Lieu of Dividends or Interest',
+      'cropInsuranceProceeds': 'Box 9 - Crop Insurance Proceeds',
+      'attorneyProceeds': 'Box 10 - Gross Proceeds Paid to an Attorney',
+      'fishPurchases': 'Box 11 - Fish Purchased for Resale',
+      'section409ADeferrals': 'Box 12 - Section 409A Deferrals',
+      'excessGoldenParachutePayments': 'Box 13 - Excess Golden Parachute Payments',
+      'nonqualifiedDeferredCompensation': 'Box 14 - Nonqualified Deferred Compensation',
+      'section409AIncome': 'Box 15a - Section 409A Income',
+      'stateTaxWithheld': 'Box 16 - State Tax Withheld',
+      'statePayerNumber': 'Box 17 - State/Payer\'s State No.',
+      'stateIncome': 'Box 18 - State Income',
+      
+      // Additional fields that might be extracted
+      'medicalPaymentsMultiple': 'Multiple Medical Payments Found'
     };
     
     for (const [fieldKey, displayName] of Object.entries(fieldMappings)) {
       if (extractedData[fieldKey] !== undefined && extractedData[fieldKey] !== null && extractedData[fieldKey] !== '') {
+        let fieldValue = extractedData[fieldKey];
+        
+        // Handle special cases
+        if (fieldKey === 'medicalPaymentsMultiple' && Array.isArray(fieldValue)) {
+          // Convert array of medical payments to string
+          fieldValue = fieldValue.map(amount => `$${amount}`).join(', ');
+        }
+        
         entries.push({
           fieldName: displayName,
-          fieldValue: String(extractedData[fieldKey]),
+          fieldValue: String(fieldValue),
           confidence: 0.95
         });
       }
