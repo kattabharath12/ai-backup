@@ -15,6 +15,7 @@ interface DocumentProcessorProps {
   taxReturnId: string
   onDocumentProcessed: (extractedData: any) => void
   onDocumentUploaded?: (document: any) => void
+  onUploadMoreRequested?: () => void
 }
 
 interface ProcessingState {
@@ -39,7 +40,8 @@ interface ProcessedDocument {
 export function DocumentProcessor({ 
   taxReturnId, 
   onDocumentProcessed, 
-  onDocumentUploaded 
+  onDocumentUploaded,
+  onUploadMoreRequested
 }: DocumentProcessorProps) {
   const [state, setState] = useState<ProcessingState>({
     files: [],
@@ -727,12 +729,21 @@ export function DocumentProcessor({
             <Button 
               variant="outline"
               onClick={() => {
-                // Reset to upload mode
+                // Reset to upload mode - keep existing processed documents
                 setState(prev => ({ 
                   ...prev, 
                   status: 'idle',
-                  message: 'Ready to upload more documents'
+                  message: 'Ready to upload more documents',
+                  // Don't clear processedDocuments to maintain document history
+                  files: [], // Clear only the pending files
+                  currentlyProcessing: null,
+                  progress: 0
                 }))
+                
+                // Notify parent component to reset its state
+                if (onUploadMoreRequested) {
+                  onUploadMoreRequested()
+                }
               }}
             >
               <Upload className="h-4 w-4 mr-2" />
