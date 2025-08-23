@@ -11,7 +11,7 @@ export interface AzureDocumentIntelligenceConfig {
 }
 
 export interface ExtractedFieldData {
-  [key: string]: string | number | DocumentType | undefined;
+  [key: string]: string | number | DocumentType | number[] | undefined;
   correctedDocumentType?: DocumentType;
   fullText?: string;
 }
@@ -996,6 +996,7 @@ export class AzureDocumentIntelligenceService {
     employerAddress?: string;
     payerName?: string;
     payerTIN?: string;
+    payerAddress?: string;
   } {
     console.log('🔍 [Azure DI OCR] Searching for personal info in OCR text...');
     
@@ -1008,6 +1009,7 @@ export class AzureDocumentIntelligenceService {
       employerAddress?: string;
       payerName?: string;
       payerTIN?: string;
+      payerAddress?: string;
     } = {};
     
     // Check if this is a 1099 form first
@@ -1023,6 +1025,7 @@ export class AzureDocumentIntelligenceService {
       if (info1099.address) personalInfo.address = info1099.address;
       if (info1099.payerName) personalInfo.payerName = info1099.payerName;
       if (info1099.payerTIN) personalInfo.payerTIN = info1099.payerTIN;
+      if (info1099.payerAddress) personalInfo.payerAddress = info1099.payerAddress;
       
       return personalInfo;
     }
