@@ -922,7 +922,7 @@ export class AzureDocumentIntelligenceService {
       },
       {
         name: 'RECIPIENT_ADDRESS_AFTER_NAME',
-        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\n([^\n]+)\s*\n[^\n]*\n([^\n]+)/i,
+        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\n(?:Street address[^\n]*\n)?([^\n]+)\s*\n(?:City[^\n]*\n)?([^\n]+)/i,
         example: "RECIPIENT'S name\nJordan Blake\nStreet address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
       }
     ];
@@ -938,15 +938,25 @@ export class AzureDocumentIntelligenceService {
             patternInfo.name === 'RECIPIENT_ADDRESS_COMBINED' ||
             patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
           if (match[2]) {
-            // For AFTER_NAME pattern, skip the "Street address" label and get the actual address
+            // For AFTER_NAME pattern, properly combine street and city
             if (patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
-              // match[1] might be "Street address (including apt. no.)", match[2] is the actual street
-              // We need to look for the city/state/zip after that
-              const cityMatch = ocrText.match(/City[^\n]*\n([^\n]+)/i);
-              if (cityMatch) {
-                address = `${match[2].trim()} ${cityMatch[1].trim()}`;
-              } else {
-                address = match[2].trim();
+              // match[1] is the street address, match[2] is the city/state/zip
+              // Skip if match[1] contains form labels
+              if (match[1] && !match[1].toLowerCase().includes('street address') && 
+                  !match[1].toLowerCase().includes('including apt')) {
+                if (match[2] && !match[2].toLowerCase().includes('city or town')) {
+                  address = `${match[1].trim()} ${match[2].trim()}`;
+                } else {
+                  address = match[1].trim();
+                }
+              } else if (match[2] && !match[2].toLowerCase().includes('city or town')) {
+                // If match[1] is a label, use match[2] as the street and look for city separately
+                const cityMatch = ocrText.match(/(?:City[^\n]*\n|^)([A-Z][A-Z\s,]+[A-Z]{2}\s+\d{5})/i);
+                if (cityMatch) {
+                  address = `${match[2].trim()} ${cityMatch[1].trim()}`;
+                } else {
+                  address = match[2].trim();
+                }
               }
             } else {
               // Combine street address and city/state/zip
@@ -1047,7 +1057,11 @@ export class AzureDocumentIntelligenceService {
         let address = match[1].trim().replace(/\n+/g, ' ').replace(/\([^)]*\)/g, '').trim();
         // Remove phone numbers from address
         address = address.replace(/\s+\(\d{3}\)\s*\d{3}-\d{4}.*$/, '').replace(/\s+\d{3}-\d{3}-\d{4}.*$/, '').trim();
-        if (address.length > 5) {
+        // Remove form labels and instructions
+        address = address.replace(/^.*?street\s+address[^,\n]*[,\n]\s*/i, '').replace(/^.*?telephone\s+no\.\s*/i, '').trim();
+        // Clean up multiple spaces and ensure proper formatting
+        address = address.replace(/\s+/g, ' ').trim();
+        if (address.length > 5 && !address.toLowerCase().includes('payer') && !address.toLowerCase().includes('street address')) {
           info1099.payerAddress = address;
           console.log(`✅ [Azure DI OCR] Found payer address using ${patternInfo.name}:`, address);
           break;
