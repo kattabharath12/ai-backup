@@ -5,6 +5,45 @@ import { prisma } from '@/lib/db'
 
 export const dynamic = "force-dynamic"
 
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getServerSession()
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
+    // Check if document exists and belongs to user
+    const document = await prisma.document.findFirst({
+      where: { id: params.id },
+      include: {
+        taxReturn: {
+          select: { userId: true }
+        }
+      }
+    })
+
+    if (!document || document.taxReturn.userId !== user.id) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+    }
+
+    return NextResponse.json(document)
+  } catch (error) {
+    console.error('Error fetching document:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
