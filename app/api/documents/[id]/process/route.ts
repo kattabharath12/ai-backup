@@ -1,5 +1,6 @@
 
 
+
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
@@ -266,10 +267,15 @@ export async function POST(
       }, { status: 500 })
     }
 
-    console.log("🔍 [PROCESS] Step 10: Updating document status to COMPLETED...")
+    console.log("🔍 [PROCESS] Step 10: Updating document status to COMPLETED and saving extractedData...")
+    // CRITICAL FIX: Save the extractedData to the Document model for Form 1040 retrieval
     await prisma.document.update({
       where: { id: params.id },
-      data: { processingStatus: ProcessingStatus.COMPLETED }
+      data: { 
+        processingStatus: ProcessingStatus.COMPLETED,
+        extractedData: extractedTaxData.extractedData, // This is the key fix!
+        ocrText: extractedTaxData.ocrText
+      }
     })
 
     console.log("✅ [PROCESS] Document processing completed successfully")
@@ -483,3 +489,4 @@ async function processGenericDocument(extractedData: ExtractedFieldData): Promis
     
     return entries;
   }
+
