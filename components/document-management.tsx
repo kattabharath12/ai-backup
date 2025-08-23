@@ -1,7 +1,8 @@
 
+
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -44,23 +45,56 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
   const [loading, setLoading] = useState(true)
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
 
-  useEffect(() => {
-    fetchDocuments()
-  }, [taxReturnId])
-
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     try {
+      console.log('🔍 Fetching documents for taxReturnId:', taxReturnId)
       const response = await fetch(`/api/tax-returns/${taxReturnId}/documents`)
       if (response.ok) {
         const data = await response.json()
+        console.log('📄 Documents fetched:', data.length, 'documents')
         setDocuments(data)
+      } else {
+        console.error('❌ Failed to fetch documents:', response.status, response.statusText)
       }
     } catch (error) {
       console.error("Error fetching documents:", error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [taxReturnId])
+
+  useEffect(() => {
+    fetchDocuments()
+  }, [fetchDocuments])
+
+  // Enhanced polling logic - poll more frequently and for longer
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Poll if there are documents in processing state OR if we have recent documents (within 30 seconds)
+      const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
+      const hasRecentDocs = documents.some(doc => {
+        const updatedTime = new Date(doc.updatedAt).getTime()
+        const now = new Date().getTime()
+        return (now - updatedTime) < 30000 // 30 seconds
+      })
+      
+      console.log('🔄 Polling check:', { 
+        hasProcessingDocs, 
+        hasRecentDocs, 
+        documentsCount: documents.length 
+      })
+      
+      if (hasProcessingDocs || hasRecentDocs) {
+        console.log('📡 Fetching documents due to processing status or recent activity...')
+        fetchDocuments()
+      }
+    }, 2000) // Poll every 2 seconds for faster updates
+
+    return () => {
+      console.log('🛑 Clearing polling interval')
+      clearInterval(interval)
+    }
+  }, [documents, fetchDocuments])
 
   const handleDeleteDocument = async (documentId: string) => {
     try {
@@ -325,3 +359,4 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
     </div>
   )
 }
+
