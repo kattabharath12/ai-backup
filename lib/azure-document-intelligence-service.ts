@@ -909,6 +909,21 @@ export class AzureDocumentIntelligenceService {
         name: 'RECIPIENT_ADDRESS_BASIC',
         pattern: /(?:RECIPIENT'S?\s+address|Recipient'?s?\s+address)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|PAYER'S?\s+|Payer'?s?\s+|$)/i,
         example: "RECIPIENT'S address: 123 Main St, Anytown, ST 12345"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_STREET_CITY',
+        pattern: /Street\s+address[^\n]*\n([^\n]+)\n[^\n]*City[^\n]*\n([^\n]+)/i,
+        example: "Street address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_COMBINED',
+        pattern: /Street\s+address[^\n]*\n([^\n]+)\n[^\n]*\n([^\n]+)/i,
+        example: "Street address\n456 MAIN STREET\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_AFTER_NAME',
+        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\n([^\n]+)\s*\n[^\n]*\n([^\n]+)/i,
+        example: "RECIPIENT'S name\nJordan Blake\nStreet address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
       }
     ];
     
@@ -916,7 +931,34 @@ export class AzureDocumentIntelligenceService {
     for (const patternInfo of recipientAddressPatterns) {
       const match = ocrText.match(patternInfo.pattern);
       if (match && match[1]) {
-        const address = match[1].trim().replace(/\n+/g, ' ');
+        let address = '';
+        
+        // Handle patterns that capture street and city separately
+        if (patternInfo.name === 'RECIPIENT_ADDRESS_STREET_CITY' || 
+            patternInfo.name === 'RECIPIENT_ADDRESS_COMBINED' ||
+            patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
+          if (match[2]) {
+            // For AFTER_NAME pattern, skip the "Street address" label and get the actual address
+            if (patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
+              // match[1] might be "Street address (including apt. no.)", match[2] is the actual street
+              // We need to look for the city/state/zip after that
+              const cityMatch = ocrText.match(/City[^\n]*\n([^\n]+)/i);
+              if (cityMatch) {
+                address = `${match[2].trim()} ${cityMatch[1].trim()}`;
+              } else {
+                address = match[2].trim();
+              }
+            } else {
+              // Combine street address and city/state/zip
+              address = `${match[1].trim()} ${match[2].trim()}`;
+            }
+          } else {
+            address = match[1].trim();
+          }
+        } else {
+          address = match[1].trim().replace(/\n+/g, ' ');
+        }
+        
         if (address.length > 5) {
           info1099.address = address;
           console.log(`✅ [Azure DI OCR] Found recipient address using ${patternInfo.name}:`, address);
@@ -974,6 +1016,40 @@ export class AzureDocumentIntelligenceService {
         if (tin.length >= 9) {
           info1099.payerTIN = tin;
           console.log(`✅ [Azure DI OCR] Found payer TIN using ${patternInfo.name}:`, tin);
+          break;
+        }
+      }
+    }
+    
+    // === PAYER ADDRESS PATTERNS ===
+    const payerAddressPatterns = [
+      {
+        name: 'PAYER_ADDRESS_MULTILINE',
+        pattern: /(?:PAYER'S?\s+name,\s+street\s+address,\s+city[^\n]*\n)([^\n]+(?:\n[^\n]+)*?)(?:\n\s*PAYER'S?\s+TIN|PAYER'S?\s+TIN|$)/i,
+        example: "PAYER'S name, street address, city or town, state or province, country, ZIP or foreign postal code, and telephone no.\nABC COMPANY INC\n123 BUSINESS ST\nANYTOWN, ST 12345"
+      },
+      {
+        name: 'PAYER_ADDRESS_AFTER_NAME',
+        pattern: /(?:PAYER'S?\s+name|Payer'?s?\s+name)\s*\n[^\n]+\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*PAYER'S?\s+TIN|PAYER'S?\s+TIN|RECIPIENT|$)/i,
+        example: "PAYER'S name\nABC COMPANY INC\n123 BUSINESS ST\nANYTOWN, ST 12345"
+      },
+      {
+        name: 'PAYER_ADDRESS_BASIC',
+        pattern: /(?:PAYER'S?\s+address|Payer'?s?\s+address)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|RECIPIENT|$)/i,
+        example: "PAYER'S address: 123 Business St, Anytown, ST 12345"
+      }
+    ];
+    
+    // Try payer address patterns
+    for (const patternInfo of payerAddressPatterns) {
+      const match = ocrText.match(patternInfo.pattern);
+      if (match && match[1]) {
+        let address = match[1].trim().replace(/\n+/g, ' ').replace(/\([^)]*\)/g, '').trim();
+        // Remove phone numbers from address
+        address = address.replace(/\s+\(\d{3}\)\s*\d{3}-\d{4}.*$/, '').replace(/\s+\d{3}-\d{3}-\d{4}.*$/, '').trim();
+        if (address.length > 5) {
+          info1099.payerAddress = address;
+          console.log(`✅ [Azure DI OCR] Found payer address using ${patternInfo.name}:`, address);
           break;
         }
       }
@@ -1609,16 +1685,18 @@ export class AzureDocumentIntelligenceService {
     if (personalInfo.payerTIN) data.payerTIN = personalInfo.payerTIN;
     if (personalInfo.payerAddress) data.payerAddress = personalInfo.payerAddress;
     
-    // Extract account number if present
+    // Enhanced account number extraction with more patterns
     const accountNumberPatterns = [
       /Account\s+number[:\s]*([A-Z0-9\-]+)/i,
       /Acct\s*#[:\s]*([A-Z0-9\-]+)/i,
-      /Account[:\s]*([A-Z0-9\-]+)/i
+      /Account[:\s]*([A-Z0-9\-]+)/i,
+      /Account\s+number.*?:\s*([A-Z0-9\-]+)/i,
+      /Account\s+number.*?\s+([A-Z0-9\-]+)/i
     ];
     
     for (const pattern of accountNumberPatterns) {
       const match = ocrText.match(pattern);
-      if (match && match[1]) {
+      if (match && match[1] && match[1].trim() !== 'number') {
         data.accountNumber = match[1].trim();
         console.log(`✅ [Azure DI OCR] Found account number: ${data.accountNumber}`);
         break;
@@ -1728,9 +1806,9 @@ export class AzureDocumentIntelligenceService {
       ],
       // Box 17 - State/Payer's state no.
       statePayerNumber: [
-        /17\s+State\/Payer's\s+state\s+no\.\s*[\n\s]*([A-Z0-9\-]+)/i,
-        /(?:^|\n)\s*17\s+([A-Z0-9\-]+)/m,
-        /Box\s*17[:\s]*([A-Z0-9\-]+)/i
+        /17\s+State\/Payer's\s+state\s+no\.\s*[\n\s]*([A-Z0-9\-\s]+)/i,
+        /(?:^|\n)\s*17\s+([A-Z0-9\-\s]+)/m,
+        /Box\s*17[:\s]*([A-Z0-9\-\s]+)/i
       ],
       // Box 18 - State income
       stateIncome: [
