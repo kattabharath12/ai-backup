@@ -52,16 +52,39 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
       if (response.ok) {
         const data = await response.json()
         console.log('📄 Documents fetched:', data.length, 'documents')
+        
+        // Log status changes for debugging
+        const processingDocs = data.filter((doc: Document) => doc.processingStatus === 'PROCESSING')
+        const completedDocs = data.filter((doc: Document) => doc.processingStatus === 'COMPLETED')
+        console.log('📊 Document status:', { 
+          processing: processingDocs.length, 
+          completed: completedDocs.length,
+          total: data.length 
+        })
+        
         setDocuments(data)
+        
+        // Trigger callback for processed documents
+        if (onDocumentProcessed && completedDocs.length > 0) {
+          completedDocs.forEach((doc: Document) => {
+            if (doc.extractedData) {
+              onDocumentProcessed(doc.extractedData)
+            }
+          })
+        }
       } else {
         console.error('❌ Failed to fetch documents:', response.status, response.statusText)
+        // Retry after a delay on failure
+        setTimeout(() => fetchDocuments(), 5000)
       }
     } catch (error) {
-      console.error("Error fetching documents:", error)
+      console.error("❌ Error fetching documents:", error)
+      // Retry after a delay on error
+      setTimeout(() => fetchDocuments(), 5000)
     } finally {
       setLoading(false)
     }
-  }, [taxReturnId])
+  }, [taxReturnId, onDocumentProcessed])
 
   useEffect(() => {
     fetchDocuments()
@@ -69,32 +92,52 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
 
   // Enhanced polling logic - poll more frequently and for longer
   useEffect(() => {
-    const interval = setInterval(() => {
-      // Poll if there are documents in processing state OR if we have recent documents (within 30 seconds)
-      const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
-      const hasRecentDocs = documents.some(doc => {
-        const updatedTime = new Date(doc.updatedAt).getTime()
-        const now = new Date().getTime()
-        return (now - updatedTime) < 30000 // 30 seconds
-      })
+    let interval: NodeJS.Timeout | null = null
+    
+    const startPolling = () => {
+      if (interval) clearInterval(interval)
       
-      console.log('🔄 Polling check:', { 
-        hasProcessingDocs, 
-        hasRecentDocs, 
-        documentsCount: documents.length 
-      })
-      
-      if (hasProcessingDocs || hasRecentDocs) {
-        console.log('📡 Fetching documents due to processing status or recent activity...')
-        fetchDocuments()
-      }
-    }, 2000) // Poll every 2 seconds for faster updates
+      interval = setInterval(async () => {
+        try {
+          // Poll if there are documents in processing state OR if we have recent documents (within 30 seconds)
+          const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
+          const hasRecentDocs = documents.some(doc => {
+            const updatedTime = new Date(doc.updatedAt).getTime()
+            const now = new Date().getTime()
+            return (now - updatedTime) < 30000 // 30 seconds
+          })
+          
+          console.log('🔄 Polling check:', { 
+            hasProcessingDocs, 
+            hasRecentDocs, 
+            documentsCount: documents.length,
+            timestamp: new Date().toISOString()
+          })
+          
+          if (hasProcessingDocs || hasRecentDocs) {
+            console.log('📡 Fetching documents due to processing status or recent activity...')
+            await fetchDocuments()
+          }
+        } catch (error) {
+          console.error('❌ Polling error:', error)
+        }
+      }, 2000) // Poll every 2 seconds for faster updates
+    }
+
+    // Start polling immediately if there are processing documents
+    const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
+    if (hasProcessingDocs || documents.length === 0) {
+      startPolling()
+    }
 
     return () => {
       console.log('🛑 Clearing polling interval')
-      clearInterval(interval)
+      if (interval) {
+        clearInterval(interval)
+        interval = null
+      }
     }
-  }, [documents, fetchDocuments])
+  }, [documents.length, documents.some(doc => doc.processingStatus === 'PROCESSING')])
 
   const handleDeleteDocument = async (documentId: string) => {
     try {
