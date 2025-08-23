@@ -232,6 +232,75 @@ export async function GET(
       }
     }
 
+    // CRITICAL FIX: Process accepted income entries from the database
+    // This handles 1099 data that was accepted by the user but may not be in document extractedData
+    console.log(`🔍 [1040 GET] Processing ${taxReturn.incomeEntries.length} accepted income entries`);
+    
+    for (const incomeEntry of taxReturn.incomeEntries) {
+      console.log(`🔍 [1040 GET] Processing income entry: ${incomeEntry.incomeType} - $${incomeEntry.amount}`);
+      
+      // Map income entries to 1040 form lines based on income type
+      switch (incomeEntry.incomeType) {
+        case 'W2_WAGES':
+          form1040Data.line1 = (form1040Data.line1 || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added W2 wages to Line 1: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'INTEREST':
+          form1040Data.line2b = (form1040Data.line2b || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added interest income to Line 2b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'DIVIDENDS':
+          form1040Data.line3b = (form1040Data.line3b || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added dividend income to Line 3b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'OTHER_INCOME':
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added other income to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'UNEMPLOYMENT':
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added unemployment income to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'RETIREMENT_DISTRIBUTIONS':
+          form1040Data.line4b = (form1040Data.line4b || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added retirement distributions to Line 4b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+          
+        case 'SOCIAL_SECURITY':
+          form1040Data.line5b = (form1040Data.line5b || 0) + (incomeEntry.amount || 0);
+          console.log(`✅ [1040 GET] Added social security benefits to Line 5b: $${incomeEntry.amount}`);
+          break;
+          
+        default:
+          // Default to other income (Line 8) for unknown types
+          form1040Data.line8 = (form1040Data.line8 || 0) + (incomeEntry.amount || 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld || 0);
+          console.log(`✅ [1040 GET] Added unknown income type '${incomeEntry.incomeType}' to Line 8: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
+          break;
+      }
+    }
+
+    // Recalculate totals after processing all income entries
+    form1040Data.line9 = (form1040Data.line1 || 0) + (form1040Data.line2b || 0) + (form1040Data.line3b || 0) + 
+                        (form1040Data.line4b || 0) + (form1040Data.line5b || 0) + (form1040Data.line6b || 0) + 
+                        (form1040Data.line7 || 0) + (form1040Data.line8 || 0);
+    
+    form1040Data.line11 = form1040Data.line9 - (form1040Data.line10 || 0);
+    
+    console.log(`✅ [1040 GET] Recalculated totals - Line 9 (Total Income): $${form1040Data.line9}, Line 11 (AGI): $${form1040Data.line11}, Line 25a (Total Withholdings): $${form1040Data.line25a || 0}`);
+    
+
     // Fill in basic info from tax return if not already populated
     // IMPORTANT: Only fill from taxReturn if we don't have W2 personal info
     const hasW2PersonalInfo = form1040Data.personalInfo && (
