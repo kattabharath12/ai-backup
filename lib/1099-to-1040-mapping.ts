@@ -387,6 +387,31 @@ export class Form1099ToForm1040Mapper {
       }
     }
     
+    // Handle format: "Street Address City, STATE ZIP" (2 parts)
+    if (commaParts.length === 2) {
+      const beforeComma = commaParts[0];
+      const afterComma = commaParts[1];
+      const stateZipMatch = afterComma.match(/^([A-Z]{2})\s+(\d{5}(-\d{4})?)$/);
+      
+      if (stateZipMatch) {
+        const words = beforeComma.trim().split(/\s+/);
+        if (words.length >= 2) {
+          const streetEndIndex = words.length - 2;
+          const street = words.slice(0, streetEndIndex + 1).join(' ');
+          const city = words.slice(streetEndIndex + 1).join(' ');
+          
+          const result = {
+            street,
+            city,
+            state: stateZipMatch[1],
+            zipCode: stateZipMatch[2]
+          };
+          console.log('✅ [1099 ADDRESS PARSER] Parsed 2-part comma address:', result);
+          return result;
+        }
+      }
+    }
+    
     // Try space-separated format: "Street Address City STATE ZIP"
     const spaceMatch = address.match(/^(.+?)\s+([A-Za-z\s]+?)\s+([A-Z]{2})\s+(\d{5}(-\d{4})?)$/);
     if (spaceMatch) {
