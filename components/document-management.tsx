@@ -1,7 +1,7 @@
 
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -44,45 +44,23 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
   const [loading, setLoading] = useState(true)
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
 
-  const fetchDocuments = useCallback(async () => {
+  useEffect(() => {
+    fetchDocuments()
+  }, [taxReturnId])
+
+  const fetchDocuments = async () => {
     try {
-      console.log('🔍 Fetching documents for taxReturnId:', taxReturnId)
       const response = await fetch(`/api/tax-returns/${taxReturnId}/documents`)
       if (response.ok) {
         const data = await response.json()
-        console.log('📄 Documents fetched:', data.length, 'documents')
         setDocuments(data)
-      } else {
-        console.error('❌ Failed to fetch documents:', response.status, response.statusText)
       }
     } catch (error) {
       console.error("Error fetching documents:", error)
     } finally {
       setLoading(false)
     }
-  }, [taxReturnId])
-
-  useEffect(() => {
-    fetchDocuments()
-  }, [fetchDocuments])
-
-  // Poll for document status updates every 3 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only poll if there are documents in processing state
-      const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
-      console.log('🔄 Polling check:', { hasProcessingDocs, documentsCount: documents.length })
-      if (hasProcessingDocs) {
-        console.log('📡 Fetching documents due to processing status...')
-        fetchDocuments()
-      }
-    }, 3000)
-
-    return () => {
-      console.log('🛑 Clearing polling interval')
-      clearInterval(interval)
-    }
-  }, [documents, fetchDocuments])
+  }
 
   const handleDeleteDocument = async (documentId: string) => {
     try {
