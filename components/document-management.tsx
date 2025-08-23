@@ -48,6 +48,19 @@ export function DocumentManagement({ taxReturnId, onDocumentProcessed }: Documen
     fetchDocuments()
   }, [taxReturnId])
 
+  // Poll for document status updates every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Only poll if there are documents in processing state
+      const hasProcessingDocs = documents.some(doc => doc.processingStatus === 'PROCESSING')
+      if (hasProcessingDocs) {
+        fetchDocuments()
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [documents])
+
   const fetchDocuments = async () => {
     try {
       const response = await fetch(`/api/tax-returns/${taxReturnId}/documents`)
