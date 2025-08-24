@@ -911,19 +911,19 @@ export class AzureDocumentIntelligenceService {
         example: "RECIPIENT'S address: 123 Main St, Anytown, ST 12345"
       },
       {
-        name: 'RECIPIENT_ADDRESS_STREET_CITY',
-        pattern: /Street\s+address[^\n]*\n([^\n]+)\n[^\n]*City[^\n]*\n([^\n]+)/i,
-        example: "Street address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
-      },
-      {
-        name: 'RECIPIENT_ADDRESS_COMBINED',
-        pattern: /Street\s+address[^\n]*\n([^\n]+)\n[^\n]*\n([^\n]+)/i,
-        example: "Street address\n456 MAIN STREET\nHOMETOWN, ST 67890"
-      },
-      {
-        name: 'RECIPIENT_ADDRESS_AFTER_NAME',
-        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\n(?:Street address[^\n]*\n)?([^\n]+)\s*\n(?:City[^\n]*\n)?([^\n]+)/i,
+        name: 'RECIPIENT_ADDRESS_STREET_CITY_PRECISE',
+        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\nStreet address[^\n]*\n([^\n]+)\s*\nCity[^\n]*\n([^\n]+)/i,
         example: "RECIPIENT'S name\nJordan Blake\nStreet address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_AFTER_TIN',
+        pattern: /RECIPIENT'S TIN:[^\n]*\n\s*\n([^\n]+)\s*\n([^\n]+)/i,
+        example: "RECIPIENT'S TIN: XXX-XX-4567\n\n456 MAIN STREET\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_SIMPLE_AFTER_NAME',
+        pattern: /RECIPIENT'S name\s*\n([^\n]+)\s*\n\s*([^\n]+)\s*\n\s*([^\n]+)/i,
+        example: "RECIPIENT'S name\nJordan Blake\n456 MAIN STREET\nHOMETOWN, ST 67890"
       }
     ];
     
@@ -934,42 +934,37 @@ export class AzureDocumentIntelligenceService {
         let address = '';
         
         // Handle patterns that capture street and city separately
-        if (patternInfo.name === 'RECIPIENT_ADDRESS_STREET_CITY' || 
-            patternInfo.name === 'RECIPIENT_ADDRESS_COMBINED' ||
-            patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
-          if (match[2]) {
-            // For AFTER_NAME pattern, properly combine street and city
-            if (patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_NAME') {
-              // match[1] is the street address, match[2] is the city/state/zip
-              // Skip if match[1] contains form labels
-              if (match[1] && !match[1].toLowerCase().includes('street address') && 
-                  !match[1].toLowerCase().includes('including apt')) {
-                if (match[2] && !match[2].toLowerCase().includes('city or town')) {
-                  address = `${match[1].trim()} ${match[2].trim()}`;
-                } else {
-                  address = match[1].trim();
-                }
-              } else if (match[2] && !match[2].toLowerCase().includes('city or town')) {
-                // If match[1] is a label, use match[2] as the street and look for city separately
-                const cityMatch = ocrText.match(/(?:City[^\n]*\n|^)([A-Z][A-Z\s,]+[A-Z]{2}\s+\d{5})/i);
-                if (cityMatch) {
-                  address = `${match[2].trim()} ${cityMatch[1].trim()}`;
-                } else {
-                  address = match[2].trim();
-                }
-              }
-            } else {
-              // Combine street address and city/state/zip
-              address = `${match[1].trim()} ${match[2].trim()}`;
-            }
+        if (patternInfo.name === 'RECIPIENT_ADDRESS_STREET_CITY_PRECISE') {
+          // match[1] is street, match[2] is city/state/zip
+          if (match[2] && !match[2].toLowerCase().includes('city or town')) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
           } else {
             address = match[1].trim();
           }
+        } else if (patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_TIN') {
+          // match[1] is street, match[2] is city/state/zip
+          if (match[2]) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
+          } else {
+            address = match[1].trim();
+          }
+        } else if (patternInfo.name === 'RECIPIENT_ADDRESS_SIMPLE_AFTER_NAME') {
+          // match[1] is name (skip), match[2] is street, match[3] is city/state/zip
+          if (match[3] && match[2] && !match[2].toLowerCase().includes('street address')) {
+            address = `${match[2].trim()} ${match[3].trim()}`;
+          } else if (match[2] && !match[2].toLowerCase().includes('street address')) {
+            address = match[2].trim();
+          }
         } else {
+          // For basic patterns, just use the captured text
           address = match[1].trim().replace(/\n+/g, ' ');
         }
         
-        if (address.length > 5) {
+        // Validate the address doesn't contain form labels
+        if (address.length > 5 && 
+            !address.toLowerCase().includes('street address') &&
+            !address.toLowerCase().includes('including apt') &&
+            !address.toLowerCase().includes('city or town')) {
           info1099.address = address;
           console.log(`✅ [Azure DI OCR] Found recipient address using ${patternInfo.name}:`, address);
           break;
@@ -1820,9 +1815,9 @@ export class AzureDocumentIntelligenceService {
       ],
       // Box 17 - State/Payer's state no.
       statePayerNumber: [
-        /17\s+State\/Payer's\s+state\s+no\.\s*[\n\s]*([A-Z0-9\-\s]+)/i,
-        /(?:^|\n)\s*17\s+([A-Z0-9\-\s]+)/m,
-        /Box\s*17[:\s]*([A-Z0-9\-\s]+)/i
+        /17\s+State\/Payer's\s+state\s+no\.\s*[\n\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /(?:^|\n)\s*17\s+([A-Z0-9\-\s]+?)(?:\n|$)/m,
+        /Box\s*17[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i
       ],
       // Box 18 - State income
       stateIncome: [
