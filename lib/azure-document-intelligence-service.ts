@@ -11,7 +11,7 @@ export interface AzureDocumentIntelligenceConfig {
 }
 
 export interface ExtractedFieldData {
-  [key: string]: string | number | DocumentType | undefined;
+  [key: string]: string | number | DocumentType | number[] | undefined;
   correctedDocumentType?: DocumentType;
   fullText?: string;
 }
@@ -474,26 +474,68 @@ export class AzureDocumentIntelligenceService {
   private process1099MiscFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
     const data = { ...baseData };
     
+    // Comprehensive field mappings for all 1099-MISC boxes
     const fieldMappings = {
+      // Payer and recipient information
       'Payer.Name': 'payerName',
       'Payer.TIN': 'payerTIN',
       'Payer.Address': 'payerAddress',
       'Recipient.Name': 'recipientName',
       'Recipient.TIN': 'recipientTIN',
       'Recipient.Address': 'recipientAddress',
-      'Rents': 'rents',
-      'Royalties': 'royalties',
-      'OtherIncome': 'otherIncome',
-      'FederalIncomeTaxWithheld': 'federalTaxWithheld',
-      'FishingBoatProceeds': 'fishingBoatProceeds',
-      'MedicalAndHealthCarePayments': 'medicalHealthPayments',
-      'NonemployeeCompensation': 'nonemployeeCompensation'
+      'AccountNumber': 'accountNumber',
+      
+      // Box 1-18 mappings
+      'Rents': 'rents',                                           // Box 1
+      'Royalties': 'royalties',                                   // Box 2
+      'OtherIncome': 'otherIncome',                              // Box 3
+      'FederalIncomeTaxWithheld': 'federalTaxWithheld',          // Box 4
+      'FishingBoatProceeds': 'fishingBoatProceeds',              // Box 5
+      'MedicalAndHealthCarePayments': 'medicalHealthPayments',    // Box 6
+      'NonemployeeCompensation': 'nonemployeeCompensation',       // Box 7 (deprecated)
+      'SubstitutePayments': 'substitutePayments',                 // Box 8
+      'CropInsuranceProceeds': 'cropInsuranceProceeds',          // Box 9
+      'GrossProceedsPaidToAttorney': 'attorneyProceeds',         // Box 10
+      'FishPurchasedForResale': 'fishPurchases',                 // Box 11
+      'Section409ADeferrals': 'section409ADeferrals',            // Box 12
+      'ExcessGoldenParachutePayments': 'excessGoldenParachutePayments', // Box 13
+      'NonqualifiedDeferredCompensation': 'nonqualifiedDeferredCompensation', // Box 14
+      'Section409AIncome': 'section409AIncome',                  // Box 15a
+      'StateTaxWithheld': 'stateTaxWithheld',                    // Box 16
+      'StatePayerNumber': 'statePayerNumber',                    // Box 17
+      'StateIncome': 'stateIncome',                              // Box 18
+      
+      // Alternative field names that Azure might use
+      'Box1': 'rents',
+      'Box2': 'royalties',
+      'Box3': 'otherIncome',
+      'Box4': 'federalTaxWithheld',
+      'Box5': 'fishingBoatProceeds',
+      'Box6': 'medicalHealthPayments',
+      'Box7': 'nonemployeeCompensation',
+      'Box8': 'substitutePayments',
+      'Box9': 'cropInsuranceProceeds',
+      'Box10': 'attorneyProceeds',
+      'Box11': 'fishPurchases',
+      'Box12': 'section409ADeferrals',
+      'Box13': 'excessGoldenParachutePayments',
+      'Box14': 'nonqualifiedDeferredCompensation',
+      'Box15a': 'section409AIncome',
+      'Box16': 'stateTaxWithheld',
+      'Box17': 'statePayerNumber',
+      'Box18': 'stateIncome'
     };
     
     for (const [azureFieldName, mappedFieldName] of Object.entries(fieldMappings)) {
       if (fields[azureFieldName]?.value !== undefined) {
         const value = fields[azureFieldName].value;
-        data[mappedFieldName] = typeof value === 'number' ? value : this.parseAmount(value);
+        
+        // Handle text fields vs numeric fields
+        if (mappedFieldName === 'statePayerNumber' || mappedFieldName === 'accountNumber') {
+          data[mappedFieldName] = String(value).trim();
+        } else {
+          data[mappedFieldName] = typeof value === 'number' ? value : this.parseAmount(value);
+        }
       }
     }
     
@@ -525,6 +567,38 @@ export class AzureDocumentIntelligenceService {
       if (!data.payerTIN && personalInfoFromOCR.payerTIN) {
         data.payerTIN = personalInfoFromOCR.payerTIN;
         console.log('✅ [Azure DI] Extracted payer TIN from OCR:', data.payerTIN);
+      }
+      
+      if (!data.payerAddress && personalInfoFromOCR.payerAddress) {
+        data.payerAddress = personalInfoFromOCR.payerAddress;
+        console.log('✅ [Azure DI] Extracted payer address from OCR:', data.payerAddress);
+      }
+    }
+    
+    // OCR fallback for missing box amounts
+    if (baseData.fullText) {
+      const missingFields = [];
+      const expectedFields = ['rents', 'royalties', 'otherIncome', 'federalTaxWithheld', 'fishingBoatProceeds', 
+                             'medicalHealthPayments', 'substitutePayments', 'cropInsuranceProceeds', 'attorneyProceeds',
+                             'fishPurchases', 'section409ADeferrals', 'excessGoldenParachutePayments', 
+                             'nonqualifiedDeferredCompensation', 'section409AIncome', 'stateTaxWithheld', 'stateIncome'];
+      
+      for (const field of expectedFields) {
+        if (!data[field] || data[field] === 0) {
+          missingFields.push(field);
+        }
+      }
+      
+      if (missingFields.length > 0) {
+        console.log(`🔍 [Azure DI] Missing ${missingFields.length} fields from structured extraction, attempting OCR fallback...`);
+        const ocrData = this.extract1099MiscFieldsFromOCR(baseData.fullText as string, {});
+        
+        for (const field of missingFields) {
+          if (ocrData[field] && ocrData[field] !== 0) {
+            data[field] = ocrData[field];
+            console.log(`✅ [Azure DI] Recovered ${field} from OCR: ${ocrData[field]}`);
+          }
+        }
       }
     }
     
@@ -827,6 +901,11 @@ export class AzureDocumentIntelligenceService {
     // === RECIPIENT ADDRESS PATTERNS ===
     const recipientAddressPatterns = [
       {
+        name: 'RECIPIENT_ADDRESS_STREET_CITY_STRUCTURED',
+        pattern: /Street address \(including apt\. no\.\)\s*\n([^\n]+)\s*\nCity or town, state or province, country, and ZIP or foreign postal code\s*\n([^\n]+)/i,
+        example: "Street address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
+      },
+      {
         name: 'RECIPIENT_ADDRESS_MULTILINE',
         pattern: /(?:RECIPIENT'S?\s+address|Recipient'?s?\s+address)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|PAYER'S?\s+|Payer'?s?\s+|$)/i,
         example: "RECIPIENT'S address\n123 Main St\nAnytown, ST 12345"
@@ -835,6 +914,21 @@ export class AzureDocumentIntelligenceService {
         name: 'RECIPIENT_ADDRESS_BASIC',
         pattern: /(?:RECIPIENT'S?\s+address|Recipient'?s?\s+address)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|PAYER'S?\s+|Payer'?s?\s+|$)/i,
         example: "RECIPIENT'S address: 123 Main St, Anytown, ST 12345"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_STREET_CITY_PRECISE',
+        pattern: /RECIPIENT'S name\s*\n[^\n]+\s*\nStreet address[^\n]*\n([^\n]+)\s*\nCity[^\n]*\n([^\n]+)/i,
+        example: "RECIPIENT'S name\nJordan Blake\nStreet address (including apt. no.)\n456 MAIN STREET\nCity or town, state or province, country, and ZIP or foreign postal code\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_AFTER_TIN',
+        pattern: /RECIPIENT'S TIN:[^\n]*\n\s*\n([^\n]+)\s*\n([^\n]+)/i,
+        example: "RECIPIENT'S TIN: XXX-XX-4567\n\n456 MAIN STREET\nHOMETOWN, ST 67890"
+      },
+      {
+        name: 'RECIPIENT_ADDRESS_SIMPLE_AFTER_NAME',
+        pattern: /RECIPIENT'S name\s*\n([^\n]+)\s*\n\s*([^\n]+)\s*\n\s*([^\n]+)/i,
+        example: "RECIPIENT'S name\nJordan Blake\n456 MAIN STREET\nHOMETOWN, ST 67890"
       }
     ];
     
@@ -842,8 +936,47 @@ export class AzureDocumentIntelligenceService {
     for (const patternInfo of recipientAddressPatterns) {
       const match = ocrText.match(patternInfo.pattern);
       if (match && match[1]) {
-        const address = match[1].trim().replace(/\n+/g, ' ');
-        if (address.length > 5) {
+        let address = '';
+        
+        // Handle patterns that capture street and city separately
+        if (patternInfo.name === 'RECIPIENT_ADDRESS_STREET_CITY_STRUCTURED') {
+          // match[1] is street, match[2] is city/state/zip
+          if (match[2]) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
+          } else {
+            address = match[1].trim();
+          }
+        } else if (patternInfo.name === 'RECIPIENT_ADDRESS_STREET_CITY_PRECISE') {
+          // match[1] is street, match[2] is city/state/zip
+          if (match[2] && !match[2].toLowerCase().includes('city or town')) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
+          } else {
+            address = match[1].trim();
+          }
+        } else if (patternInfo.name === 'RECIPIENT_ADDRESS_AFTER_TIN') {
+          // match[1] is street, match[2] is city/state/zip
+          if (match[2]) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
+          } else {
+            address = match[1].trim();
+          }
+        } else if (patternInfo.name === 'RECIPIENT_ADDRESS_SIMPLE_AFTER_NAME') {
+          // match[1] is name (skip), match[2] is street, match[3] is city/state/zip
+          if (match[3] && match[2] && !match[2].toLowerCase().includes('street address')) {
+            address = `${match[2].trim()} ${match[3].trim()}`;
+          } else if (match[2] && !match[2].toLowerCase().includes('street address')) {
+            address = match[2].trim();
+          }
+        } else {
+          // For basic patterns, just use the captured text
+          address = match[1].trim().replace(/\n+/g, ' ');
+        }
+        
+        // Validate the address doesn't contain form labels
+        if (address.length > 5 && 
+            !address.toLowerCase().includes('street address') &&
+            !address.toLowerCase().includes('including apt') &&
+            !address.toLowerCase().includes('city or town')) {
           info1099.address = address;
           console.log(`✅ [Azure DI OCR] Found recipient address using ${patternInfo.name}:`, address);
           break;
@@ -853,6 +986,11 @@ export class AzureDocumentIntelligenceService {
     
     // === PAYER NAME PATTERNS ===
     const payerNamePatterns = [
+      {
+        name: 'PAYER_NAME_AFTER_LABEL',
+        pattern: /(?:PAYER'S?\s+name,\s+street\s+address[^\n]*\n)([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
+        example: "PAYER'S name, street address, city or town, state or province, country, ZIP or foreign postal code, and telephone no.\nABC COMPANY INC"
+      },
       {
         name: 'PAYER_NAME_MULTILINE',
         pattern: /(?:PAYER'S?\s+name|Payer'?s?\s+name)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
@@ -870,7 +1008,7 @@ export class AzureDocumentIntelligenceService {
       const match = ocrText.match(patternInfo.pattern);
       if (match && match[1]) {
         const name = match[1].trim();
-        if (name.length > 2) {
+        if (name.length > 2 && !name.toLowerCase().includes('street address')) {
           info1099.payerName = name;
           console.log(`✅ [Azure DI OCR] Found payer name using ${patternInfo.name}:`, name);
           break;
@@ -905,6 +1043,63 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
+    // === PAYER ADDRESS PATTERNS ===
+    const payerAddressPatterns = [
+      {
+        name: 'PAYER_ADDRESS_AFTER_COMPANY_NAME',
+        pattern: /(?:PAYER'S?\s+name,\s+street\s+address[^\n]*\n)([A-Za-z\s&.,'-]+?)\n([^\n]+)\n([^\n]+)(?:\n\([^)]*\))?(?:\n\s*PAYER'S?\s+TIN|$)/i,
+        example: "PAYER'S name, street address...\nABC COMPANY INC\n123 BUSINESS ST\nANYTOWN, ST 12345\n(555) 123-4567"
+      },
+      {
+        name: 'PAYER_ADDRESS_MULTILINE',
+        pattern: /(?:PAYER'S?\s+name,\s+street\s+address,\s+city[^\n]*\n)([^\n]+(?:\n[^\n]+)*?)(?:\n\s*PAYER'S?\s+TIN|PAYER'S?\s+TIN|$)/i,
+        example: "PAYER'S name, street address, city or town, state or province, country, ZIP or foreign postal code, and telephone no.\nABC COMPANY INC\n123 BUSINESS ST\nANYTOWN, ST 12345"
+      },
+      {
+        name: 'PAYER_ADDRESS_AFTER_NAME',
+        pattern: /(?:PAYER'S?\s+name|Payer'?s?\s+name)\s*\n[^\n]+\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*PAYER'S?\s+TIN|PAYER'S?\s+TIN|RECIPIENT|$)/i,
+        example: "PAYER'S name\nABC COMPANY INC\n123 BUSINESS ST\nANYTOWN, ST 12345"
+      },
+      {
+        name: 'PAYER_ADDRESS_BASIC',
+        pattern: /(?:PAYER'S?\s+address|Payer'?s?\s+address)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|RECIPIENT|$)/i,
+        example: "PAYER'S address: 123 Business St, Anytown, ST 12345"
+      }
+    ];
+    
+    // Try payer address patterns
+    for (const patternInfo of payerAddressPatterns) {
+      const match = ocrText.match(patternInfo.pattern);
+      if (match && match[1]) {
+        let address = '';
+        
+        if (patternInfo.name === 'PAYER_ADDRESS_AFTER_COMPANY_NAME') {
+          // For this pattern: match[1] is company name, match[2] is street, match[3] is city/state/zip
+          if (match[2] && match[3]) {
+            address = `${match[2].trim()} ${match[3].trim()}`;
+          }
+        } else {
+          address = match[1].trim().replace(/\n+/g, ' ').replace(/\([^)]*\)/g, '').trim();
+        }
+        
+        // Remove phone numbers from address
+        address = address.replace(/\s+\(\d{3}\)\s*\d{3}-\d{4}.*$/, '').replace(/\s+\d{3}-\d{3}-\d{4}.*$/, '').trim();
+        // Remove form labels and instructions
+        address = address.replace(/^.*?street\s+address[^,\n]*[,\n]\s*/i, '').replace(/^.*?telephone\s+no\.\s*/i, '').trim();
+        // Clean up multiple spaces and ensure proper formatting
+        address = address.replace(/\s+/g, ' ').trim();
+        
+        if (address.length > 5 && 
+            !address.toLowerCase().includes('payer') && 
+            !address.toLowerCase().includes('street address') &&
+            !address.toLowerCase().includes('abc company inc')) {
+          info1099.payerAddress = address;
+          console.log(`✅ [Azure DI OCR] Found payer address using ${patternInfo.name}:`, address);
+          break;
+        }
+      }
+    }
+    
     return info1099;
   }
 
@@ -922,6 +1117,7 @@ export class AzureDocumentIntelligenceService {
     employerAddress?: string;
     payerName?: string;
     payerTIN?: string;
+    payerAddress?: string;
   } {
     console.log('🔍 [Azure DI OCR] Searching for personal info in OCR text...');
     
@@ -934,6 +1130,7 @@ export class AzureDocumentIntelligenceService {
       employerAddress?: string;
       payerName?: string;
       payerTIN?: string;
+      payerAddress?: string;
     } = {};
     
     // Check if this is a 1099 form first
@@ -949,6 +1146,7 @@ export class AzureDocumentIntelligenceService {
       if (info1099.address) personalInfo.address = info1099.address;
       if (info1099.payerName) personalInfo.payerName = info1099.payerName;
       if (info1099.payerTIN) personalInfo.payerTIN = info1099.payerTIN;
+      if (info1099.payerAddress) personalInfo.payerAddress = info1099.payerAddress;
       
       return personalInfo;
     }
@@ -1530,41 +1728,212 @@ export class AzureDocumentIntelligenceService {
     if (personalInfo.address) data.recipientAddress = personalInfo.address;
     if (personalInfo.payerName) data.payerName = personalInfo.payerName;
     if (personalInfo.payerTIN) data.payerTIN = personalInfo.payerTIN;
+    if (personalInfo.payerAddress) data.payerAddress = personalInfo.payerAddress;
     
-    // Extract 1099-MISC specific amounts
+    // Enhanced account number extraction with more patterns
+    const accountNumberPatterns = [
+      /Account\s+number[:\s]*([A-Z0-9\-]+)/i,
+      /Acct\s*#[:\s]*([A-Z0-9\-]+)/i,
+      /Account[:\s]*([A-Z0-9\-]+)/i,
+      /Account\s+number.*?:\s*([A-Z0-9\-]+)/i,
+      /Account\s+number.*?\s+([A-Z0-9\-]+)/i
+    ];
+    
+    for (const pattern of accountNumberPatterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1] && match[1].trim() !== 'number') {
+        data.accountNumber = match[1].trim();
+        console.log(`✅ [Azure DI OCR] Found account number: ${data.accountNumber}`);
+        break;
+      }
+    }
+    
+    // FIXED: More precise 1099-MISC box patterns with better anchoring to prevent cross-matching
     const amountPatterns = {
+      // Box 1 - Rents - More specific pattern to avoid cross-matching
       rents: [
-        /1\s+Rents\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*1\s+\$?([0-9,]+\.?\d{0,2})/m
+        /^1\s+Rents\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n1\s+Rents\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*1[:\s]*Rents[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 2 - Royalties - More specific pattern
       royalties: [
-        /2\s+Royalties\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*2\s+\$?([0-9,]+\.?\d{0,2})/m
+        /^2\s+Royalties\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n2\s+Royalties\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*2[:\s]*Royalties[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 3 - Other income - CRITICAL FIX: More specific pattern
       otherIncome: [
-        /3\s+Other\s+income\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*3\s+\$?([0-9,]+\.?\d{0,2})/m
+        /^3\s+Other\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n3\s+Other\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*3[:\s]*Other\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ],
+      // Box 4 - Federal income tax withheld - More specific pattern
       federalTaxWithheld: [
-        /4\s+Federal\s+income\s+tax\s+withheld\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        /(?:^|\n)\s*4\s+\$?([0-9,]+\.?\d{0,2})/m
+        /^4\s+Federal\s+income\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n4\s+Federal\s+income\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 5 - Fishing boat proceeds - CRITICAL FIX: More specific pattern
+      fishingBoatProceeds: [
+        /^5\s+Fishing\s+boat\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n5\s+Fishing\s+boat\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*5[:\s]*Fishing\s+boat\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 6 - Medical and health care payments - More specific pattern
+      medicalHealthPayments: [
+        /^6\s+Medical\s+and\s+health\s+care\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n6\s+Medical\s+and\s+health\s+care\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 7 - Nonemployee compensation - More specific pattern
+      nonemployeeCompensation: [
+        /^7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*7[:\s]*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 8 - Substitute payments - More specific pattern
+      substitutePayments: [
+        /^8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*8[:\s]*Substitute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 9 - Crop insurance proceeds - More specific pattern
+      cropInsuranceProceeds: [
+        /^9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*9[:\s]*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 10 - Attorney proceeds - More specific pattern
+      attorneyProceeds: [
+        /^10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*10[:\s]*Gross\s+proceeds\s+paid\s+to\s+an\s+attorney[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 11 - Fish purchases - More specific pattern
+      fishPurchases: [
+        /^11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*11[:\s]*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 12 - Section 409A deferrals - More specific pattern
+      section409ADeferrals: [
+        /^12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*12[:\s]*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 13 - Excess golden parachute payments - More specific pattern
+      excessGoldenParachutePayments: [
+        /^13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*13[:\s]*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 14 - Nonqualified deferred compensation - More specific pattern
+      nonqualifiedDeferredCompensation: [
+        /^14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*14[:\s]*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 15a - Section 409A income - More specific pattern
+      section409AIncome: [
+        /^15a\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n15a\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*15a[:\s]*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 16 - State tax withheld - More specific pattern
+      stateTaxWithheld: [
+        /^16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*16[:\s]*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      ],
+      // Box 17 - State/Payer's state no. - More specific pattern
+      statePayerNumber: [
+        /^17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
+        /\n17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
+        /Box\s*17[:\s]*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i
+      ],
+      // Box 18 - State income - More specific pattern
+      stateIncome: [
+        /^18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /\n18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*18[:\s]*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
       ]
     };
     
+    // Extract all box amounts
     for (const [fieldName, patterns] of Object.entries(amountPatterns)) {
       for (const pattern of patterns) {
         const match = ocrText.match(pattern);
         if (match && match[1]) {
-          const amountStr = match[1].replace(/,/g, '');
-          const amount = parseFloat(amountStr);
+          let value: string | number = match[1];
           
-          if (!isNaN(amount) && amount >= 0) {
-            data[fieldName] = amount;
-            console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
-            break;
+          // Handle numeric fields
+          if (fieldName !== 'statePayerNumber') {
+            const amountStr = match[1].replace(/,/g, '');
+            const amount = parseFloat(amountStr);
+            
+            if (!isNaN(amount) && amount >= 0) {
+              value = amount;
+              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
+            } else {
+              continue; // Skip invalid amounts
+            }
+          } else {
+            // Handle text fields like state payer number
+            value = match[1].trim();
+            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value}`);
           }
+          
+          data[fieldName] = value;
+          break;
         }
       }
+    }
+    
+    // Extract additional medical payment amounts (Box 6 can have multiple values)
+    // Enhanced pattern to capture multiple medical payments on separate lines
+    const medicalPaymentPattern = /(?:6\s+Medical\s+and\s+health\s+care\s+payments|medical.*?payments?).*?\$?([0-9,]+\.?\d{0,2})/gi;
+    const medicalPayments = [];
+    let medicalMatch;
+    
+    // Reset regex lastIndex to ensure we capture all matches
+    medicalPaymentPattern.lastIndex = 0;
+    
+    while ((medicalMatch = medicalPaymentPattern.exec(ocrText)) !== null) {
+      const amountStr = medicalMatch[1].replace(/,/g, '');
+      const amount = parseFloat(amountStr);
+      
+      if (!isNaN(amount) && amount > 0) {
+        medicalPayments.push(amount);
+        console.log(`✅ [Azure DI OCR] Found medical payment: $${amount}`);
+      }
+    }
+    
+    // Also look for standalone dollar amounts after Box 6 medical payments
+    const box6Context = ocrText.match(/6\s+Medical\s+and\s+health\s+care\s+payments[\s\S]*?(?=7\s+|$)/i);
+    if (box6Context) {
+      const additionalAmountPattern = /\$([0-9,]+\.?\d{0,2})/g;
+      let additionalMatch;
+      
+      while ((additionalMatch = additionalAmountPattern.exec(box6Context[0])) !== null) {
+        const amountStr = additionalMatch[1].replace(/,/g, '');
+        const amount = parseFloat(amountStr);
+        
+        if (!isNaN(amount) && amount > 0 && !medicalPayments.includes(amount)) {
+          medicalPayments.push(amount);
+          console.log(`✅ [Azure DI OCR] Found additional medical payment: $${amount}`);
+        }
+      }
+    }
+    
+    if (medicalPayments.length > 1) {
+      data.medicalPaymentsMultiple = medicalPayments;
+      // Update the main medical payment field to be the sum or first amount
+      data.medicalHealthPayments = medicalPayments[0]; // Keep first amount as primary
+      console.log(`✅ [Azure DI OCR] Found multiple medical payments: ${medicalPayments.join(', ')}`);
+    } else if (medicalPayments.length === 1 && !data.medicalHealthPayments) {
+      data.medicalHealthPayments = medicalPayments[0];
+      console.log(`✅ [Azure DI OCR] Found single medical payment: $${medicalPayments[0]}`);
     }
     
     return data;
