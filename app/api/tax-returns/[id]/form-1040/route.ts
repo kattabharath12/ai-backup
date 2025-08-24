@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -370,6 +369,62 @@ export async function GET(
       form1040Data.filingStatus = form1040Data.filingStatus || taxReturn.filingStatus as any;
       form1040Data.taxYear = form1040Data.taxYear || taxReturn.taxYear;
     }
+
+    // ===== CRITICAL TAX CALCULATION FIX - ADD THIS BLOCK =====
+    
+    // Import tax calculation functions
+    const { calculateTaxLiability, getStandardDeduction } = await import('@/lib/tax-calculations');
+
+    // Get filing status for calculations
+    const filingStatus = form1040Data.filingStatus || taxReturn.filingStatus;
+    const adjustedGrossIncome = form1040Data.line11 || 0;
+
+    console.log(`🧮 [1040 GET] Starting tax calculations for ${filingStatus} with AGI: $${adjustedGrossIncome}`);
+
+    // Calculate standard deduction (Line 12)
+    const standardDeduction = getStandardDeduction(filingStatus);
+    form1040Data.line12 = standardDeduction;
+
+    // Calculate taxable income (Line 15)
+    const taxableIncome = Math.max(0, adjustedGrossIncome - standardDeduction);
+    form1040Data.line15 = taxableIncome;
+
+    // Calculate tax liability (Line 16)
+    const taxLiability = calculateTaxLiability(taxableIncome, filingStatus);
+    form1040Data.line16 = taxLiability;
+
+    // Calculate total credits (for now, assume 0 unless you have credit calculations)
+    const totalCredits = form1040Data.line19 || 0;
+
+    // Calculate total tax after credits (Line 24)
+    const totalTax = Math.max(0, taxLiability - totalCredits);
+    form1040Data.line24 = totalTax;
+
+    // Total payments and withholdings (Line 32)
+    const totalPayments = form1040Data.line25a || 0;
+    form1040Data.line32 = totalPayments;
+
+    // Calculate refund or amount owed
+    if (totalPayments > totalTax) {
+      // Refund (Line 33)
+      form1040Data.line33 = totalPayments - totalTax;
+      form1040Data.line37 = 0;
+    } else {
+      // Amount owed (Line 37)
+      form1040Data.line33 = 0;
+      form1040Data.line37 = totalTax - totalPayments;
+    }
+
+    console.log(`✅ [1040 GET] Tax calculations complete:`);
+    console.log(`  - Standard Deduction (Line 12): $${standardDeduction}`);
+    console.log(`  - Taxable Income (Line 15): $${taxableIncome}`);
+    console.log(`  - Tax Liability (Line 16): $${taxLiability}`);
+    console.log(`  - Total Tax (Line 24): $${totalTax}`);
+    console.log(`  - Total Payments (Line 32): $${totalPayments}`);
+    console.log(`  - Refund (Line 33): $${form1040Data.line33}`);
+    console.log(`  - Amount Owed (Line 37): $${form1040Data.line37}`);
+
+    // ===== END OF TAX CALCULATION FIX =====
 
     console.log("✅ [1040 GET] Successfully retrieved 1040 form data");
     if (process.env.NODE_ENV === 'development') {
