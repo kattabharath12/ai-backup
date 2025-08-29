@@ -602,7 +602,119 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
+    // CRITICAL FIX: Add field validation and correction using OCR fallback
+    if (baseData.fullText) {
+      const validatedData = this.validateAndCorrect1099MiscFields(data, baseData.fullText as string);
+      return validatedData;
+    }
+    
     return data;
+  }
+
+  /**
+   * Validates and corrects 1099-MISC field mappings using OCR fallback
+   * This addresses the issue where Azure DI maps values to incorrect fields
+   */
+  private validateAndCorrect1099MiscFields(
+    structuredData: ExtractedFieldData, 
+    ocrText: string
+  ): ExtractedFieldData {
+    console.log('🔍 [Azure DI] Validating 1099-MISC field mappings...');
+    
+    // Extract data using OCR as ground truth
+    const ocrData = this.extract1099MiscFieldsFromOCR(ocrText, { fullText: ocrText });
+    
+    const correctedData = { ...structuredData };
+    let correctionsMade = 0;
+    
+    // Define validation rules for critical fields that commonly get mismatched
+    const criticalFields = [
+      'otherIncome',           // Box 3 - Often gets mapped incorrectly
+      'fishingBoatProceeds',   // Box 5 - Often receives wrong values
+      'medicalHealthPayments', // Box 6 - Often gets cross-contaminated
+      'rents',                 // Box 1 - Sometimes misaligned
+      'royalties',             // Box 2 - Sometimes misaligned
+      'federalTaxWithheld'     // Box 4 - Important for tax calculations
+    ];
+    
+    for (const field of criticalFields) {
+      const structuredValue = this.parseAmount(structuredData[field]) || 0;
+      const ocrValue = this.parseAmount(ocrData[field]) || 0;
+      
+      // If values differ significantly (more than $100), trust OCR
+      if (Math.abs(structuredValue - ocrValue) > 100) {
+        console.log(`🔧 [Azure DI] Correcting ${field}: $${structuredValue} → $${ocrValue} (OCR)`);
+        correctedData[field] = ocrValue;
+        correctionsMade++;
+      }
+      // If structured field is empty/null but OCR found a value, use OCR
+      else if ((structuredValue === 0 || !structuredData[field]) && ocrValue > 0) {
+        console.log(`🔧 [Azure DI] Filling missing ${field}: $0 → $${ocrValue} (OCR)`);
+        correctedData[field] = ocrValue;
+        correctionsMade++;
+      }
+    }
+    
+    // Special validation for common cross-contamination patterns
+    // Pattern 1: Other Income value incorrectly mapped to Fishing Boat Proceeds
+    if (structuredData.fishingBoatProceeds && !structuredData.otherIncome && 
+        ocrData.otherIncome && ocrData.fishingBoatProceeds) {
+      const structuredFishing = this.parseAmount(structuredData.fishingBoatProceeds);
+      const ocrOther = this.parseAmount(ocrData.otherIncome);
+      const ocrFishing = this.parseAmount(ocrData.fishingBoatProceeds);
+      
+      // If structured fishing amount matches OCR other income amount, it's likely swapped
+      if (Math.abs(structuredFishing - ocrOther) < 100 && ocrFishing !== structuredFishing) {
+        console.log(`🔧 [Azure DI] Detected cross-contamination: Other Income/Fishing Boat Proceeds swap`);
+        correctedData.otherIncome = ocrOther;
+        correctedData.fishingBoatProceeds = ocrFishing;
+        correctionsMade += 2;
+      }
+    }
+    
+    // Pattern 2: Values shifted between adjacent boxes
+    const adjacentBoxPairs = [
+      ['rents', 'royalties'],
+      ['royalties', 'otherIncome'],
+      ['otherIncome', 'federalTaxWithheld'],
+      ['federalTaxWithheld', 'fishingBoatProceeds'],
+      ['fishingBoatProceeds', 'medicalHealthPayments']
+    ];
+    
+    for (const [field1, field2] of adjacentBoxPairs) {
+      const struct1 = this.parseAmount(structuredData[field1]) || 0;
+      const struct2 = this.parseAmount(structuredData[field2]) || 0;
+      const ocr1 = this.parseAmount(ocrData[field1]) || 0;
+      const ocr2 = this.parseAmount(ocrData[field2]) || 0;
+      
+      // Check if values are swapped between adjacent fields
+      if (struct1 > 0 && struct2 > 0 && ocr1 > 0 && ocr2 > 0) {
+        if (Math.abs(struct1 - ocr2) < 100 && Math.abs(struct2 - ocr1) < 100) {
+          console.log(`🔧 [Azure DI] Detected adjacent field swap: ${field1} ↔ ${field2}`);
+          correctedData[field1] = ocr1;
+          correctedData[field2] = ocr2;
+          correctionsMade += 2;
+        }
+      }
+    }
+    
+    if (correctionsMade > 0) {
+      console.log(`✅ [Azure DI] Made ${correctionsMade} field corrections using OCR validation`);
+      
+      // Log the corrections for debugging
+      console.log('🔍 [Azure DI] Field correction summary:');
+      for (const field of criticalFields) {
+        const originalValue = this.parseAmount(structuredData[field]) || 0;
+        const correctedValue = this.parseAmount(correctedData[field]) || 0;
+        if (originalValue !== correctedValue) {
+          console.log(`  ${field}: $${originalValue} → $${correctedValue}`);
+        }
+      }
+    } else {
+      console.log('✅ [Azure DI] No field corrections needed - structured extraction appears accurate');
+    }
+    
+    return correctedData;
   }
 
   private process1099NecFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
@@ -1752,39 +1864,39 @@ export class AzureDocumentIntelligenceService {
     const amountPatterns = {
       // Box 1 - Rents - More specific pattern to avoid cross-matching
       rents: [
-        /^1\s+Rents\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n1\s+Rents\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*1[:\s]*Rents[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /^1\s+Rents\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n1\s+Rents\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*1[:\s]*Rents[:\s]*\$([0-9,]+\.?\d{0,2})/i
       ],
       // Box 2 - Royalties - More specific pattern
       royalties: [
-        /^2\s+Royalties\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n2\s+Royalties\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*2[:\s]*Royalties[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /^2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*2[:\s]*Royalties[:\s]*\$([0-9,]+\.?\d{0,2})/i
       ],
       // Box 3 - Other income - CRITICAL FIX: More specific pattern
       otherIncome: [
-        /^3\s+Other\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n3\s+Other\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*3[:\s]*Other\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /Box\s*3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
+        /^3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im
       ],
       // Box 4 - Federal income tax withheld - More specific pattern
       federalTaxWithheld: [
-        /^4\s+Federal\s+income\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n4\s+Federal\s+income\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /^4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$([0-9,]+\.?\d{0,2})/i
       ],
       // Box 5 - Fishing boat proceeds - CRITICAL FIX: More specific pattern
       fishingBoatProceeds: [
-        /^5\s+Fishing\s+boat\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n5\s+Fishing\s+boat\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*5[:\s]*Fishing\s+boat\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /Box\s*5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
+        /^5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im
       ],
       // Box 6 - Medical and health care payments - More specific pattern
       medicalHealthPayments: [
-        /^6\s+Medical\s+and\s+health\s+care\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n6\s+Medical\s+and\s+health\s+care\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /^6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
+        /\n6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$([0-9,]+\.?\d{0,2})/i
       ],
       // Box 7 - Nonemployee compensation - More specific pattern
       nonemployeeCompensation: [
