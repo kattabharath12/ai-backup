@@ -1801,121 +1801,194 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
-    // FIXED: More precise 1099-MISC box patterns with better anchoring to prevent cross-matching
+    // ENHANCED: More precise 1099-MISC box patterns with better anchoring to prevent cross-matching
     const amountPatterns = {
-      // Box 1 - Rents - More specific pattern to avoid cross-matching
+      // Box 1 - Rents - Enhanced patterns with progressive fallback
       rents: [
-        /^1\s+Rents\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n1\s+Rents\s*\$([0-9,]+\.?\d{0,2})/im,
-        /Box\s*1[:\s]*Rents[:\s]*\$([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*1\s+Rents\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*1[:\s]*Rents[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /1\s*\.?\s*Rents[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Rr]ents?.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*1\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /1\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 2 - Royalties - More specific pattern
+      
+      // Box 2 - Royalties - Enhanced patterns
       royalties: [
-        /^2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
-        /Box\s*2[:\s]*Royalties[:\s]*\$([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*2[:\s]*Royalties[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /2\s*\.?\s*Royalties[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Rr]oyalties?.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*2\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /2\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 3 - Other income - CRITICAL FIX: More specific pattern
+      
+      // Box 3 - Other income - CRITICAL FIX: Enhanced patterns with better specificity
       otherIncome: [
-        /Box\s*3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
-        /^3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im
+        /(?:^|\n)\s*3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*3[:\s]*Other\s+income[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /3\s*\.?\s*Other\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Oo]ther\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*3\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /3\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 4 - Federal income tax withheld - More specific pattern
+      
+      // Box 4 - Federal income tax withheld - Enhanced patterns
       federalTaxWithheld: [
-        /^4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
-        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /4\s*\.?\s*Federal\s+income\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ederal.*?tax.*?withheld.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*4\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /4\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 5 - Fishing boat proceeds - CRITICAL FIX: More specific pattern
+      
+      // Box 5 - Fishing boat proceeds - CRITICAL FIX: Enhanced patterns
       fishingBoatProceeds: [
-        /Box\s*5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
-        /^5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im
+        /(?:^|\n)\s*5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*5[:\s]*Fishing\s+boat\s+proceeds[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /5\s*\.?\s*Fishing\s+boat\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ishing\s+boat\s+proceeds.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*5\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /5\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 6 - Medical and health care payments - More specific pattern
+      
+      // Box 6 - Medical and health care payments - Enhanced patterns
       medicalHealthPayments: [
-        /^6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
-        /\n6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
-        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /6\s*\.?\s*Medical\s+and\s+health\s+care\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Mm]edical.*?health.*?care.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*6\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /6\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 7 - Nonemployee compensation - More specific pattern
+      
+      // Box 7 - Nonemployee compensation - Enhanced patterns
       nonemployeeCompensation: [
-        /^7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*7[:\s]*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*7[:\s]*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /7\s*\.?\s*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Nn]onemployee\s+compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*7\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /7\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 8 - Substitute payments - More specific pattern
+      
+      // Box 8 - Substitute payments - Enhanced patterns
       substitutePayments: [
-        /^8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*8[:\s]*Substitute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*8[:\s]*Substitute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /8\s*\.?\s*Substitute\s+payments.*?\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ubstitute.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*8\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /8\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 9 - Crop insurance proceeds - More specific pattern
+      
+      // Box 9 - Crop insurance proceeds - Enhanced patterns
       cropInsuranceProceeds: [
-        /^9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*9[:\s]*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*9[:\s]*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /9\s*\.?\s*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Cc]rop\s+insurance\s+proceeds.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*9\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /9\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 10 - Attorney proceeds - More specific pattern
-      attorneyProceeds: [
-        /^10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*10[:\s]*Gross\s+proceeds\s+paid\s+to\s+an\s+attorney[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+      
+      // Box 10 - Gross proceeds paid to an attorney - FIXED: Changed from attorneyProceeds to grossProceedsAttorney
+      grossProceedsAttorney: [
+        /(?:^|\n)\s*10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*10[:\s]*Gross\s+proceeds\s+paid\s+to\s+an\s+attorney[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /10\s*\.?\s*Gross\s+proceeds.*?attorney.*?\$?([0-9,]+\.?\d{0,2})/i,
+        /[Gg]ross.*?proceeds.*?attorney.*?\$([0-9,]+\.?\d{0,2})/i,
+        /[Aa]ttorney.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*10\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 11 - Fish purchases - More specific pattern
+      
+      // Box 11 - Fish purchased for resale - Enhanced patterns
       fishPurchases: [
-        /^11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*11[:\s]*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*11[:\s]*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /11\s*\.?\s*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ish\s+purchased.*?resale.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*11\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /11\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 12 - Section 409A deferrals - More specific pattern
+      
+      // Box 12 - Section 409A deferrals - FIXED: Changed from looking for "15a" to "12"
       section409ADeferrals: [
-        /^12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*12[:\s]*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*12[:\s]*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /12\s*\.?\s*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ection\s+409A\s+deferrals.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*12\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /12\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 13 - Excess golden parachute payments - More specific pattern
+      
+      // Box 13 - Excess golden parachute payments - Enhanced patterns
       excessGoldenParachutePayments: [
-        /^13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*13[:\s]*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*13[:\s]*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /13\s*\.?\s*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ee]xcess.*?golden.*?parachute.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*13\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /13\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 14 - Nonqualified deferred compensation - More specific pattern
+      
+      // Box 14 - Nonqualified deferred compensation - Enhanced patterns
       nonqualifiedDeferredCompensation: [
-        /^14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*14[:\s]*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*14[:\s]*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /14\s*\.?\s*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Nn]onqualified.*?deferred.*?compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /[Dd]eferred.*?compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*14\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 15a - Section 409A income - More specific pattern
+      
+      // Box 15 - Section 409A income - FIXED: Changed from "15a" to "15"
       section409AIncome: [
-        /^15a\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n15a\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*15a[:\s]*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*15\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*15[:\s]*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /15\s*\.?\s*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ection\s+409A\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*15\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /15\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 16 - State tax withheld - More specific pattern
+      
+      // Box 16 - State tax withheld - Enhanced patterns
       stateTaxWithheld: [
-        /^16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*16[:\s]*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*16[:\s]*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /16\s*\.?\s*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]tate\s+tax\s+withheld.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*16\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /16\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 17 - State/Payer's state no. - More specific pattern
+      
+      // Box 17 - State/Payer's state no. - Enhanced patterns
       statePayerNumber: [
-        /^17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
-        /\n17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
-        /Box\s*17[:\s]*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i
+        /(?:^|\n)\s*17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
+        /Box\s*17[:\s]*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /17\s*\.?\s*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /[Ss]tate.*?[Pp]ayer.*?state.*?no\..*?([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /(?:^|\n)\s*17\s*[^\n]*([A-Z0-9\-\s]+?)(?:\n|$)/m
       ],
-      // Box 18 - State income - More specific pattern
+      
+      // Box 18 - State income - Enhanced patterns
       stateIncome: [
-        /^18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /\n18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
-        /Box\s*18[:\s]*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i
+        /(?:^|\n)\s*18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*18[:\s]*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /18\s*\.?\s*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]tate\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*18\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /18\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ]
     };
     
-    // Extract all box amounts
+    // Extract all box amounts using progressive pattern matching
     for (const [fieldName, patterns] of Object.entries(amountPatterns)) {
-      for (const pattern of patterns) {
+      let found = false;
+      
+      for (let i = 0; i < patterns.length && !found; i++) {
+        const pattern = patterns[i];
         const match = ocrText.match(pattern);
         if (match && match[1]) {
           let value: string | number = match[1];
@@ -1927,18 +2000,19 @@ export class AzureDocumentIntelligenceService {
             
             if (!isNaN(amount) && amount >= 0) {
               value = amount;
-              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
+              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount} (pattern ${i + 1})`);
+              found = true;
             } else {
               continue; // Skip invalid amounts
             }
           } else {
             // Handle text fields like state payer number
             value = match[1].trim();
-            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value}`);
+            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value} (pattern ${i + 1})`);
+            found = true;
           }
           
           data[fieldName] = value;
-          break;
         }
       }
     }
@@ -2063,7 +2137,9 @@ export class AzureDocumentIntelligenceService {
     return data;
   }
 }
- export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
+
+// Export function for service instantiation - PLACED OUTSIDE THE CLASS
+export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
   const config = {
     endpoint: process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT!,
     apiKey: process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY!
