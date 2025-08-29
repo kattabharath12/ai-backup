@@ -1,4 +1,5 @@
 
+
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { prisma } from "@/lib/db"
@@ -37,6 +38,20 @@ export async function POST(
 
     const data = await request.json()
 
+    // Validate documentId if provided
+    if (data.documentId) {
+      const document = await prisma.document.findFirst({
+        where: {
+          id: data.documentId,
+          taxReturnId: params.id
+        }
+      })
+
+      if (!document) {
+        return NextResponse.json({ error: "Document not found" }, { status: 404 })
+      }
+    }
+
     const incomeEntry = await prisma.incomeEntry.create({
       data: {
         taxReturnId: params.id,
@@ -48,6 +63,7 @@ export async function POST(
         payerName: data.payerName,
         payerTIN: data.payerTIN,
         federalTaxWithheld: data.federalTaxWithheld || 0,
+        documentId: data.documentId || null, // Link to source document if provided
       }
     })
 
@@ -60,3 +76,4 @@ export async function POST(
     )
   }
 }
+
