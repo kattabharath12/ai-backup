@@ -786,4 +786,3 @@ export function EnhancedIncomeStep({
     </form>
   )
 }
-
