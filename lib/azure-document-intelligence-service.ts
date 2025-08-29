@@ -495,7 +495,7 @@ export class AzureDocumentIntelligenceService {
       'NonemployeeCompensation': 'nonemployeeCompensation',       // Box 7 (deprecated)
       'SubstitutePayments': 'substitutePayments',                 // Box 8
       'CropInsuranceProceeds': 'cropInsuranceProceeds',          // Box 9
-      'GrossProceedsPaidToAttorney': 'attorneyProceeds',         // Box 10
+      'GrossProceedsPaidToAttorney': 'grossProceedsAttorney',         // Box 10
       'FishPurchasedForResale': 'fishPurchases',                 // Box 11
       'Section409ADeferrals': 'section409ADeferrals',            // Box 12
       'ExcessGoldenParachutePayments': 'excessGoldenParachutePayments', // Box 13
@@ -515,7 +515,7 @@ export class AzureDocumentIntelligenceService {
       'Box7': 'nonemployeeCompensation',
       'Box8': 'substitutePayments',
       'Box9': 'cropInsuranceProceeds',
-      'Box10': 'attorneyProceeds',
+      'Box10': 'grossProceedsAttorney',
       'Box11': 'fishPurchases',
       'Box12': 'section409ADeferrals',
       'Box13': 'excessGoldenParachutePayments',
@@ -579,7 +579,7 @@ export class AzureDocumentIntelligenceService {
     if (baseData.fullText) {
       const missingFields = [];
       const expectedFields = ['rents', 'royalties', 'otherIncome', 'federalTaxWithheld', 'fishingBoatProceeds', 
-                             'medicalHealthPayments', 'substitutePayments', 'cropInsuranceProceeds', 'attorneyProceeds',
+                             'medicalHealthPayments', 'substitutePayments', 'cropInsuranceProceeds', 'grossProceedsAttorney',
                              'fishPurchases', 'section409ADeferrals', 'excessGoldenParachutePayments', 
                              'nonqualifiedDeferredCompensation', 'section409AIncome', 'stateTaxWithheld', 'stateIncome'];
       
