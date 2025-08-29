@@ -2062,7 +2062,8 @@ export class AzureDocumentIntelligenceService {
     
     return data;
   }
-  export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
+}
+ export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
   const config = {
     endpoint: process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT!,
     apiKey: process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY!
@@ -2073,5 +2074,4 @@ export class AzureDocumentIntelligenceService {
   }
   
   return new AzureDocumentIntelligenceService(config);
-}
 }
