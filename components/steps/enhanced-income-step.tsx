@@ -122,49 +122,61 @@ export function EnhancedIncomeStep({
     return () => clearTimeout(timer)
   }, [incomeEntries, totalIncome, hasUnsavedChanges, autoSaving, onAutoSave])
 
-  const handleDocumentProcessed = async (extractedData: any) => {
-    console.log('🔍 [CALLBACK] handleDocumentProcessed called with:', extractedData)
-    
-    // CRITICAL FIX: Process and display extracted data FIRST
-    console.log('🔍 [CALLBACK] Converting extracted data to income entries immediately...')
-    const autoEntries = convertExtractedDataToIncomeEntries(extractedData)
-    console.log('🔍 [CALLBACK] Auto entries created:', autoEntries)
-    
-    // Set the pending entries immediately so they appear in the UI
-    setPendingAutoEntries(autoEntries)
-    console.log('🔍 [CALLBACK] pendingAutoEntries set immediately - UI should show extracted data now')
-    
-    // THEN handle name validation separately (non-blocking)
-    setTimeout(() => {
-      console.log('🔍 [CALLBACK] Starting name validation process...')
-      
-      // Extract names for validation
-      const extractedNames = extractNamesFromDocument(extractedData?.extractedData || extractedData)
-      const profileNames = {
-        firstName: taxReturn.firstName || '',
-        lastName: taxReturn.lastName || '',
-        spouseFirstName: taxReturn.spouseFirstName,
-        spouseLastName: taxReturn.spouseLastName
-      }
-
-      // Validate names
-      const validationResult = validateNames(profileNames, extractedNames)
-      console.log('🔍 [CALLBACK] Name validation result:', validationResult)
-      
-      // Only show name validation dialog if there are actual mismatches
-      if (!validationResult.isValid && validationResult.mismatches.length > 0) {
-        console.log('🔍 [CALLBACK] Name mismatches found, showing validation dialog')
-        setNameValidationDialog({
-          isOpen: true,
-          validationResult,
-          documentType: extractedData?.documentType || 'tax document',
-          extractedData
-        })
-      } else {
-        console.log('🔍 [CALLBACK] Names validated successfully, no dialog needed')
-      }
-    }, 100) // Small delay to ensure UI updates first
+ const handleDocumentProcessed = async (extractedData: any) => {
+  console.log('🔍 [CALLBACK] handleDocumentProcessed called with:', extractedData)
+  
+  // GUARD: Don't process if documentType is missing or if we already have pending entries
+  if (!extractedData?.documentType && pendingAutoEntries.length > 0) {
+    console.log('🔍 [GUARD] Skipping processing - no documentType and entries already exist')
+    return
   }
+  
+  // GUARD: Don't process if documentType is undefined
+  if (!extractedData?.documentType) {
+    console.log('🔍 [GUARD] Skipping processing - documentType is undefined')
+    return
+  }
+  
+  // CRITICAL FIX: Process and display extracted data FIRST
+  console.log('🔍 [CALLBACK] Converting extracted data to income entries immediately...')
+  const autoEntries = convertExtractedDataToIncomeEntries(extractedData)
+  console.log('🔍 [CALLBACK] Auto entries created:', autoEntries)
+  
+  // Set the pending entries immediately so they appear in the UI
+  setPendingAutoEntries(autoEntries)
+  console.log('🔍 [CALLBACK] pendingAutoEntries set immediately - UI should show extracted data now')
+  
+  // THEN handle name validation separately (non-blocking)
+  setTimeout(() => {
+    console.log('🔍 [CALLBACK] Starting name validation process...')
+    
+    // Extract names for validation
+    const extractedNames = extractNamesFromDocument(extractedData?.extractedData || extractedData)
+    const profileNames = {
+      firstName: taxReturn.firstName || '',
+      lastName: taxReturn.lastName || '',
+      spouseFirstName: taxReturn.spouseFirstName,
+      spouseLastName: taxReturn.spouseLastName
+    }
+
+    // Validate names
+    const validationResult = validateNames(profileNames, extractedNames)
+    console.log('🔍 [CALLBACK] Name validation result:', validationResult)
+    
+    // Only show name validation dialog if there are actual mismatches
+    if (!validationResult.isValid && validationResult.mismatches.length > 0) {
+      console.log('🔍 [CALLBACK] Name mismatches found, showing validation dialog')
+      setNameValidationDialog({
+        isOpen: true,
+        validationResult,
+        documentType: extractedData?.documentType || 'tax document',
+        extractedData
+      })
+    } else {
+      console.log('🔍 [CALLBACK] Names validated successfully, no dialog needed')
+    }
+  }, 100) // Small delay to ensure UI updates first
+}
 
   const handleNameValidationConfirm = async (proceedWithMismatches: boolean) => {
     console.log('🔍 [NAME_VALIDATION] handleNameValidationConfirm called with:', proceedWithMismatches)
