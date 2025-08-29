@@ -168,6 +168,18 @@ export function EnhancedIncomeStep({
   const convertExtractedDataToIncomeEntries = (extractedData: any): AutoPopulatedEntry[] => {  
     const entries: AutoPopulatedEntry[] = []
     const data = extractedData?.extractedData || extractedData
+    // DEBUG: Log all available fields for troubleshooting
+    console.log('🔍 [DEBUG] Available fields in extracted data:', Object.keys(data));
+    console.log('🔍 [DEBUG] Document type:', extractedData?.documentType);
+    
+    // DEBUG: Log field values for critical 1099-MISC fields
+    if (extractedData?.documentType === 'FORM_1099_MISC') {
+      const criticalFields = ['otherIncome', 'fishingBoatProceeds', 'medicalHealthPayments', 'rents', 'royalties'];
+      criticalFields.forEach(field => {
+        console.log(`🔍 [DEBUG] ${field}:`, data[field]);
+      });
+    }
+
 
     // Handle W-2 data
     if (extractedData?.documentType === 'W2' || data?.wages) {
@@ -232,11 +244,11 @@ export function EnhancedIncomeStep({
         { field: 'royalties', label: 'Royalties' },
         { field: 'otherIncome', label: 'Other Income' },
         { field: 'fishingBoatProceeds', label: 'Fishing Boat Proceeds' },
-        { field: 'medicalHealthcarePayments', label: 'Medical/Healthcare Payments' },
+        { field: 'medicalHealthPayments', label: 'Medical/Healthcare Payments' },
         { field: 'cropInsuranceProceeds', label: 'Crop Insurance Proceeds' },
         { field: 'grossProceedsAttorney', label: 'Gross Proceeds to Attorney' },
         { field: 'section409ADeferrals', label: 'Section 409A Deferrals' },
-        { field: 'excessGoldenParachute', label: 'Excess Golden Parachute' },
+        { field: 'excessGoldenParachutePayments', label: 'Excess Golden Parachute' },
         { field: 'nonqualifiedDeferredCompensation', label: 'Nonqualified Deferred Compensation' },
         { field: 'stateTaxWithheld', label: 'State Tax Withheld' }
       ]
@@ -786,3 +798,4 @@ export function EnhancedIncomeStep({
     </form>
   )
 }
+
