@@ -757,18 +757,21 @@ export class AzureDocumentIntelligenceService {
     return data;
   }
 
-  private processGenericFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
-    const data = { ...baseData };
-    
-    // Process all available fields generically
-    for (const [fieldName, fieldValue] of Object.entries(fields)) {
-      if (fieldValue && typeof fieldValue === 'object' && 'value' in fieldValue) {
-        data[fieldName] = fieldValue.value;
+private processGenericFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
+  const data = { ...baseData };
+  
+  // Process all available fields generically with proper type checking
+  for (const [fieldName, fieldValue] of Object.entries(fields)) {
+    if (fieldValue && typeof fieldValue === 'object' && 'value' in fieldValue) {
+      const value = (fieldValue as any).value;
+      if (typeof value === 'string' || typeof value === 'number') {
+        data[fieldName] = value;
       }
     }
-    
-    return data;
   }
+  
+  return data;
+}
 
   private parseAmount(value: any): number {
     if (typeof value === 'number') {
