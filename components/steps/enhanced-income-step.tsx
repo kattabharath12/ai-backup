@@ -1,5 +1,3 @@
-
-
 "use client"
 
 import { useState, useEffect } from "react"
@@ -125,64 +123,83 @@ export function EnhancedIncomeStep({
   }, [incomeEntries, totalIncome, hasUnsavedChanges, autoSaving, onAutoSave])
 
   const handleDocumentProcessed = async (extractedData: any) => {
-    console.log('Document processing completed:', extractedData)
+    console.log('🔍 [CALLBACK] handleDocumentProcessed called with:', extractedData)
     
-    // Extract names for validation
-    const extractedNames = extractNamesFromDocument(extractedData?.extractedData || extractedData)
-    const profileNames = {
-      firstName: taxReturn.firstName || '',
-      lastName: taxReturn.lastName || '',
-      spouseFirstName: taxReturn.spouseFirstName,
-      spouseLastName: taxReturn.spouseLastName
-    }
+    // CRITICAL FIX: Process and display extracted data FIRST
+    console.log('🔍 [CALLBACK] Converting extracted data to income entries immediately...')
+    const autoEntries = convertExtractedDataToIncomeEntries(extractedData)
+    console.log('🔍 [CALLBACK] Auto entries created:', autoEntries)
+    
+    // Set the pending entries immediately so they appear in the UI
+    setPendingAutoEntries(autoEntries)
+    console.log('🔍 [CALLBACK] pendingAutoEntries set immediately - UI should show extracted data now')
+    
+    // THEN handle name validation separately (non-blocking)
+    setTimeout(() => {
+      console.log('🔍 [CALLBACK] Starting name validation process...')
+      
+      // Extract names for validation
+      const extractedNames = extractNamesFromDocument(extractedData?.extractedData || extractedData)
+      const profileNames = {
+        firstName: taxReturn.firstName || '',
+        lastName: taxReturn.lastName || '',
+        spouseFirstName: taxReturn.spouseFirstName,
+        spouseLastName: taxReturn.spouseLastName
+      }
 
-    // Validate names
-    const validationResult = validateNames(profileNames, extractedNames)
-    
-    // Show name validation dialog
-    setNameValidationDialog({
-      isOpen: true,
-      validationResult,
-      documentType: extractedData?.documentType || 'tax document',
-      extractedData
-    })
+      // Validate names
+      const validationResult = validateNames(profileNames, extractedNames)
+      console.log('🔍 [CALLBACK] Name validation result:', validationResult)
+      
+      // Only show name validation dialog if there are actual mismatches
+      if (!validationResult.isValid && validationResult.mismatches.length > 0) {
+        console.log('🔍 [CALLBACK] Name mismatches found, showing validation dialog')
+        setNameValidationDialog({
+          isOpen: true,
+          validationResult,
+          documentType: extractedData?.documentType || 'tax document',
+          extractedData
+        })
+      } else {
+        console.log('🔍 [CALLBACK] Names validated successfully, no dialog needed')
+      }
+    }, 100) // Small delay to ensure UI updates first
   }
 
   const handleNameValidationConfirm = async (proceedWithMismatches: boolean) => {
-    const { extractedData } = nameValidationDialog
+    console.log('🔍 [NAME_VALIDATION] handleNameValidationConfirm called with:', proceedWithMismatches)
     
     if (!proceedWithMismatches && !nameValidationDialog.validationResult?.isValid) {
-      // User chose to update profile first - close dialog
+      // User chose to update profile first - close dialog but keep extracted data visible
+      console.log('🔍 [NAME_VALIDATION] User chose to update profile first')
       setNameValidationDialog((prev: typeof nameValidationDialog) => ({ ...prev, isOpen: false }))
       return
     }
 
-    // Convert extracted data to income entries
-    const autoEntries = convertExtractedDataToIncomeEntries(extractedData)
-    setPendingAutoEntries(autoEntries)
-    
-    // Close dialog
+    // Close dialog - extracted data is already visible
+    console.log('🔍 [NAME_VALIDATION] User confirmed to proceed, closing dialog')
     setNameValidationDialog((prev: typeof nameValidationDialog) => ({ ...prev, isOpen: false }))
   }
 
   const convertExtractedDataToIncomeEntries = (extractedData: any): AutoPopulatedEntry[] => {  
     const entries: AutoPopulatedEntry[] = []
     const data = extractedData?.extractedData || extractedData
+    
     // DEBUG: Log all available fields for troubleshooting
-    console.log('🔍 [DEBUG] Available fields in extracted data:', Object.keys(data));
-    console.log('🔍 [DEBUG] Document type:', extractedData?.documentType);
+    console.log('🔍 [CONVERT] Available fields in extracted data:', Object.keys(data));
+    console.log('🔍 [CONVERT] Document type:', extractedData?.documentType);
     
     // DEBUG: Log field values for critical 1099-MISC fields
     if (extractedData?.documentType === 'FORM_1099_MISC') {
-      const criticalFields = ['otherIncome', 'fishingBoatProceeds', 'medicalHealthPayments', 'rents', 'royalties'];
+      const criticalFields = ['otherIncome', 'fishingBoatProceeds', 'medicalHealthPayments', 'rents', 'royalties', 'nonemployeeCompensation'];
       criticalFields.forEach(field => {
-        console.log(`🔍 [DEBUG] ${field}:`, data[field]);
+        console.log(`🔍 [CONVERT] ${field}:`, data[field]);
       });
     }
 
-
     // Handle W-2 data
     if (extractedData?.documentType === 'W2' || data?.wages) {
+      console.log('🔍 [CONVERT] Processing W-2 data...');
       entries.push({
         incomeType: 'W2_WAGES',
         amount: cleanAmount(data.wages || '0'),
@@ -201,6 +218,7 @@ export function EnhancedIncomeStep({
 
     // Handle 1099-INT data
     if (extractedData?.documentType === 'FORM_1099_INT' || data?.interestIncome) {
+      console.log('🔍 [CONVERT] Processing 1099-INT data...');
       entries.push({
         incomeType: 'INTEREST',
         amount: cleanAmount(data.interestIncome || '0'),
@@ -219,6 +237,7 @@ export function EnhancedIncomeStep({
 
     // Handle 1099-DIV data
     if (extractedData?.documentType === 'FORM_1099_DIV' || data?.ordinaryDividends) {
+      console.log('🔍 [CONVERT] Processing 1099-DIV data...');
       entries.push({
         incomeType: 'DIVIDENDS',
         amount: cleanAmount(data.ordinaryDividends || '0'),
@@ -237,40 +256,40 @@ export function EnhancedIncomeStep({
 
     // Enhanced 1099-MISC data handling with comprehensive field mapping
     if (extractedData?.documentType === 'FORM_1099_MISC') {
-      console.log('🔍 [1099-MISC] Processing 1099-MISC document with data:', data);
+      console.log('🔍 [CONVERT] Processing 1099-MISC document with data:', data);
       
       // Map all possible 1099-MISC income fields with proper priority
       const miscFields = [
-        { field: 'nonemployeeCompensation', label: 'Nonemployee Compensation' },
-        { field: 'rents', label: 'Rents' },
-        { field: 'royalties', label: 'Royalties' },
-        { field: 'otherIncome', label: 'Other Income' },
-        { field: 'fishingBoatProceeds', label: 'Fishing Boat Proceeds' },
-        { field: 'medicalHealthPayments', label: 'Medical/Healthcare Payments' },
-        { field: 'cropInsuranceProceeds', label: 'Crop Insurance Proceeds' },
-        { field: 'grossProceedsAttorney', label: 'Gross Proceeds to Attorney' },
-        { field: 'section409ADeferrals', label: 'Section 409A Deferrals' },
-        { field: 'excessGoldenParachutePayments', label: 'Excess Golden Parachute' },
-        { field: 'nonqualifiedDeferredCompensation', label: 'Nonqualified Deferred Compensation' },
-        { field: 'stateTaxWithheld', label: 'State Tax Withheld' }
+        { field: 'nonemployeeCompensation', label: 'Nonemployee Compensation', box: 'Box 1' },
+        { field: 'rents', label: 'Rents', box: 'Box 2' },
+        { field: 'royalties', label: 'Royalties', box: 'Box 3' },
+        { field: 'otherIncome', label: 'Other Income', box: 'Box 4' },
+        { field: 'fishingBoatProceeds', label: 'Fishing Boat Proceeds', box: 'Box 5' },
+        { field: 'medicalHealthPayments', label: 'Medical/Healthcare Payments', box: 'Box 6' },
+        { field: 'cropInsuranceProceeds', label: 'Crop Insurance Proceeds', box: 'Box 7' },
+        { field: 'grossProceedsAttorney', label: 'Gross Proceeds to Attorney', box: 'Box 8' },
+        { field: 'section409ADeferrals', label: 'Section 409A Deferrals', box: 'Box 9' },
+        { field: 'excessGoldenParachutePayments', label: 'Excess Golden Parachute', box: 'Box 10' },
+        { field: 'nonqualifiedDeferredCompensation', label: 'Nonqualified Deferred Compensation', box: 'Box 11' },
+        { field: 'stateTaxWithheld', label: 'State Tax Withheld', box: 'Box 12' }
       ]
 
       // Process each field that has a value
-      miscFields.forEach(({ field, label }) => {
+      miscFields.forEach(({ field, label, box }) => {
         const fieldValue = data[field]
-        console.log(`🔍 [1099-MISC] Checking field ${field}:`, fieldValue);
+        console.log(`🔍 [CONVERT] Checking field ${field} (${box}):`, fieldValue);
         
         if (fieldValue) {
           const cleanedAmount = cleanAmount(fieldValue)
           const numericAmount = parseFloat(cleanedAmount)
-          console.log(`🔍 [1099-MISC] Field ${field} - cleaned: ${cleanedAmount}, numeric: ${numericAmount}`);
+          console.log(`🔍 [CONVERT] Field ${field} - cleaned: ${cleanedAmount}, numeric: ${numericAmount}`);
           
           if (!isNaN(numericAmount) && numericAmount > 0) {
-            console.log(`✅ [1099-MISC] Adding entry for ${field}: $${numericAmount}`);
+            console.log(`✅ [CONVERT] Adding entry for ${field}: $${numericAmount}`);
             entries.push({
               incomeType: 'OTHER_INCOME',
               amount: cleanedAmount,
-              description: `1099-MISC ${label} from ${data.payerName || 'Payer'}`,
+              description: `1099-MISC ${label} (${box}) from ${data.payerName || 'Payer'}`,
               employerName: '',
               employerEIN: '',
               payerName: data.payerName || '',
@@ -287,12 +306,13 @@ export function EnhancedIncomeStep({
 
       // Enhanced fallback logic - try all possible field variations
       if (entries.length === 0) {
-        console.log('🔍 [1099-MISC] No entries found, trying fallback logic...');
+        console.log('🔍 [CONVERT] No entries found, trying fallback logic...');
         
         // Try different possible field names that might be returned by backend
         const fallbackFields = [
           'totalIncome', 'amount', 'totalAmount', 'miscIncome',
-          'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'box7', 'box8', 'box9', 'box10'
+          'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'box7', 'box8', 'box9', 'box10', 'box11', 'box12',
+          'Box1', 'Box2', 'Box3', 'Box4', 'Box5', 'Box6', 'Box7', 'Box8', 'Box9', 'Box10', 'Box11', 'Box12'
         ]
         
         for (const fallbackField of fallbackFields) {
@@ -302,7 +322,7 @@ export function EnhancedIncomeStep({
             const numericAmount = parseFloat(cleanedAmount)
             
             if (!isNaN(numericAmount) && numericAmount > 0) {
-              console.log(`✅ [1099-MISC] Using fallback field ${fallbackField}: $${numericAmount}`);
+              console.log(`✅ [CONVERT] Using fallback field ${fallbackField}: $${numericAmount}`);
               entries.push({
                 incomeType: 'OTHER_INCOME',
                 amount: cleanedAmount,
@@ -324,7 +344,7 @@ export function EnhancedIncomeStep({
         
         // If still no entries, create a generic entry to ensure data isn't lost
         if (entries.length === 0) {
-          console.log('⚠️ [1099-MISC] No valid amounts found, creating generic entry for review');
+          console.log('⚠️ [CONVERT] No valid amounts found, creating generic entry for review');
           entries.push({
             incomeType: 'OTHER_INCOME',
             amount: '0',
@@ -342,11 +362,12 @@ export function EnhancedIncomeStep({
         }
       }
       
-      console.log(`🔍 [1099-MISC] Final entries created: ${entries.length}`);
+      console.log(`🔍 [CONVERT] Final 1099-MISC entries created: ${entries.length}`);
     }
 
     // Handle 1099-NEC data
     if (extractedData?.documentType === 'FORM_1099_NEC' || data?.nonemployeeCompensation) {
+      console.log('🔍 [CONVERT] Processing 1099-NEC data...');
       entries.push({
         incomeType: 'OTHER_INCOME',
         amount: cleanAmount(data.nonemployeeCompensation || '0'),
@@ -363,7 +384,65 @@ export function EnhancedIncomeStep({
       })
     }
 
-    return entries.filter(entry => parseFloat(entry.amount) > 0)
+    // Handle 1099-G (Government payments)
+    if (extractedData?.documentType === 'FORM_1099_G' || data?.unemploymentCompensation) {
+      console.log('🔍 [CONVERT] Processing 1099-G data...');
+      entries.push({
+        incomeType: 'UNEMPLOYMENT',
+        amount: cleanAmount(data.unemploymentCompensation || '0'),
+        description: `1099-G Unemployment Compensation from ${data.payerName || 'Government Agency'}`,
+        employerName: '',
+        employerEIN: '',
+        payerName: data.payerName || '',
+        payerTIN: data.payerTIN || '',
+        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+        isAutoPopulated: true,
+        documentId: extractedData?.documentId,
+        documentType: 'FORM_1099_G',
+        confidence: extractedData?.confidence || 0.85
+      })
+    }
+
+    // Handle 1099-R (Retirement distributions)
+    if (extractedData?.documentType === 'FORM_1099_R' || data?.grossDistribution) {
+      console.log('🔍 [CONVERT] Processing 1099-R data...');
+      entries.push({
+        incomeType: 'RETIREMENT_DISTRIBUTIONS',
+        amount: cleanAmount(data.grossDistribution || '0'),
+        description: `1099-R Retirement Distribution from ${data.payerName || 'Retirement Plan'}`,
+        employerName: '',
+        employerEIN: '',
+        payerName: data.payerName || '',
+        payerTIN: data.payerTIN || '',
+        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+        isAutoPopulated: true,
+        documentId: extractedData?.documentId,
+        documentType: 'FORM_1099_R',
+        confidence: extractedData?.confidence || 0.85
+      })
+    }
+
+    // Handle SSA-1099 (Social Security)
+    if (extractedData?.documentType === 'SSA_1099' || data?.socialSecurityBenefits) {
+      console.log('🔍 [CONVERT] Processing SSA-1099 data...');
+      entries.push({
+        incomeType: 'SOCIAL_SECURITY',
+        amount: cleanAmount(data.socialSecurityBenefits || '0'),
+        description: `SSA-1099 Social Security Benefits from ${data.payerName || 'Social Security Administration'}`,
+        employerName: '',
+        employerEIN: '',
+        payerName: data.payerName || 'Social Security Administration',
+        payerTIN: data.payerTIN || '',
+        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+        isAutoPopulated: true,
+        documentId: extractedData?.documentId,
+        documentType: 'SSA_1099',
+        confidence: extractedData?.confidence || 0.85
+      })
+    }
+
+    console.log(`🔍 [CONVERT] Total entries created: ${entries.length}`);
+    return entries.filter(entry => parseFloat(entry.amount) >= 0) // Include zero amounts for manual review
   }
 
   const cleanAmount = (amount: string): string => {
@@ -373,6 +452,7 @@ export function EnhancedIncomeStep({
   }
 
   const handleAcceptAutoEntry = async (entry: AutoPopulatedEntry, index: number) => {
+    console.log('🔍 [ACCEPT] Accepting auto entry:', entry);
     try {
       const entryData = {
         incomeType: entry.incomeType,
@@ -402,17 +482,20 @@ export function EnhancedIncomeStep({
         
         setIncomeEntries((prev: any[]) => [...prev, savedEntry])
         setPendingAutoEntries((prev: AutoPopulatedEntry[]) => prev.filter((_, i) => i !== index))
+        console.log('✅ [ACCEPT] Entry accepted and saved successfully');
       }
     } catch (error) {
-      console.error("Error adding auto-populated income entry:", error)
+      console.error("❌ [ACCEPT] Error adding auto-populated income entry:", error)
     }
   }
 
   const handleRejectAutoEntry = (index: number) => {
+    console.log('🔍 [REJECT] Rejecting auto entry at index:', index);
     setPendingAutoEntries((prev: AutoPopulatedEntry[]) => prev.filter((_, i) => i !== index))
   }
 
   const handleAcceptAllAutoEntries = async () => {
+    console.log('🔍 [ACCEPT_ALL] Accepting all auto entries:', pendingAutoEntries.length);
     for (let i = 0; i < pendingAutoEntries.length; i++) {
       await handleAcceptAutoEntry(pendingAutoEntries[i], 0) // Always use index 0 since array shrinks
     }
@@ -588,6 +671,9 @@ export function EnhancedIncomeStep({
                         {entry.employerEIN && <p>Employer EIN: {entry.employerEIN}</p>}
                         {entry.payerName && <p>Payer: {entry.payerName}</p>}
                         {entry.payerTIN && <p>Payer TIN: {entry.payerTIN}</p>}
+                        {parseFloat(entry.federalTaxWithheld) > 0 && (
+                          <p>Federal Tax Withheld: ${parseFloat(entry.federalTaxWithheld).toLocaleString()}</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex space-x-2 ml-4">
@@ -772,67 +858,53 @@ export function EnhancedIncomeStep({
               className="w-full"
             >
               <Plus className="mr-2 h-4 w-4" />
-              Add Income Source
+              Add Income Entry
             </Button>
           </CardContent>
         </Card>
 
-        {/* Total Income Summary */}
-        <Card>
+        {/* Summary Card */}
+        <Card className="bg-green-50 border-green-200">
           <CardHeader>
-            <CardTitle>Income Summary</CardTitle>
+            <CardTitle className="flex items-center space-x-2">
+              <DollarSign className="h-5 w-5 text-green-600" />
+              <span>Income Summary</span>
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-center py-6">
-              <div className="text-3xl font-bold text-primary mb-2">
-                ${totalIncome.toLocaleString()}
-              </div>
-              <p className="text-gray-600">Total Income</p>
+            <div className="text-2xl font-bold text-green-700">
+              Total Income: ${totalIncome.toLocaleString()}
             </div>
+            <p className="text-sm text-green-600 mt-1">
+              This will be used as your Adjusted Gross Income for Stage 1 calculations
+            </p>
           </CardContent>
         </Card>
+      </div>
 
-        <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <Button type="button" variant="outline" onClick={onPrev}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            
-            {hasUnsavedChanges && !autoSaving && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleSaveOnly}
-                disabled={autoSaving}
-                size="sm"
-              >
-                {autoSaving ? "Saving..." : "Save"}
-              </Button>
-            )}
-            {autoSaving && (
-              <div className="flex items-center space-x-1 text-blue-600 text-sm">
-                <div className="animate-spin h-3 w-3 border border-blue-600 border-t-transparent rounded-full"></div>
-                <span>Auto-saving...</span>
-              </div>
-            )}
-          </div>
-          
-          <div className="flex space-x-2">
-            <Button 
-              type="button"
-              variant="outline"
-              onClick={handleSaveAndContinue}
-              disabled={saving}
-            >
-              {saving ? "Saving..." : "Save & Continue"}
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : "Continue"}
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </div>
+      {/* Navigation */}
+      <div className="flex justify-between pt-6">
+        <Button type="button" variant="outline" onClick={onPrev}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Previous
+        </Button>
+        <div className="flex space-x-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleSaveOnly}
+            disabled={saving || autoSaving}
+          >
+            {autoSaving ? "Auto-saving..." : "Save"}
+          </Button>
+          <Button
+            type="submit"
+            disabled={loading || saving}
+            onClick={handleSaveAndContinue}
+          >
+            {loading || saving ? "Saving..." : "Save & Continue"}
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -847,4 +919,3 @@ export function EnhancedIncomeStep({
     </form>
   )
 }
-
