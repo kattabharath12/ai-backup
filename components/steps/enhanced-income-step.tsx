@@ -1,4 +1,5 @@
 
+
 "use client"
 
 import { useState, useEffect } from "react"
@@ -180,6 +181,7 @@ export function EnhancedIncomeStep({
         payerTIN: '',
         federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
         isAutoPopulated: true,
+        documentId: extractedData?.documentId,
         documentType: 'W2',
         confidence: extractedData?.confidence || 0.85
       })
@@ -197,6 +199,7 @@ export function EnhancedIncomeStep({
         payerTIN: data.payerTIN || '',
         federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
         isAutoPopulated: true,
+        documentId: extractedData?.documentId,
         documentType: 'FORM_1099_INT',
         confidence: extractedData?.confidence || 0.85
       })
@@ -214,28 +217,70 @@ export function EnhancedIncomeStep({
         payerTIN: data.payerTIN || '',
         federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
         isAutoPopulated: true,
+        documentId: extractedData?.documentId,
         documentType: 'FORM_1099_DIV',
         confidence: extractedData?.confidence || 0.85
       })
     }
 
-    // Handle 1099-MISC data
+    // Enhanced 1099-MISC data handling with comprehensive field mapping
     if (extractedData?.documentType === 'FORM_1099_MISC') {
-      const miscAmount = data.nonemployeeCompensation || data.otherIncome || data.rents || '0'
-      if (parseFloat(cleanAmount(miscAmount)) > 0) {
-        entries.push({
-          incomeType: 'OTHER_INCOME',
-          amount: cleanAmount(miscAmount),
-          description: `1099-MISC Income from ${data.payerName || 'Payer'}`,
-          employerName: '',
-          employerEIN: '',
-          payerName: data.payerName || '',
-          payerTIN: data.payerTIN || '',
-          federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-          isAutoPopulated: true,
-          documentType: 'FORM_1099_MISC',
-          confidence: extractedData?.confidence || 0.85
-        })
+      // Map all possible 1099-MISC income fields with proper priority
+      const miscFields = [
+        { field: 'nonemployeeCompensation', label: 'Nonemployee Compensation' },
+        { field: 'rents', label: 'Rents' },
+        { field: 'royalties', label: 'Royalties' },
+        { field: 'otherIncome', label: 'Other Income' },
+        { field: 'fishingBoatProceeds', label: 'Fishing Boat Proceeds' },
+        { field: 'medicalHealthcarePayments', label: 'Medical/Healthcare Payments' },
+        { field: 'cropInsuranceProceeds', label: 'Crop Insurance Proceeds' },
+        { field: 'grossProceedsAttorney', label: 'Gross Proceeds to Attorney' },
+        { field: 'section409ADeferrals', label: 'Section 409A Deferrals' },
+        { field: 'excessGoldenParachute', label: 'Excess Golden Parachute' },
+        { field: 'nonqualifiedDeferredCompensation', label: 'Nonqualified Deferred Compensation' },
+        { field: 'stateTaxWithheld', label: 'State Tax Withheld' }
+      ]
+
+      // Process each field that has a value
+      miscFields.forEach(({ field, label }) => {
+        const fieldValue = data[field]
+        if (fieldValue && parseFloat(cleanAmount(fieldValue)) > 0) {
+          entries.push({
+            incomeType: 'OTHER_INCOME',
+            amount: cleanAmount(fieldValue),
+            description: `1099-MISC ${label} from ${data.payerName || 'Payer'}`,
+            employerName: '',
+            employerEIN: '',
+            payerName: data.payerName || '',
+            payerTIN: data.payerTIN || '',
+            federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+            isAutoPopulated: true,
+            documentId: extractedData?.documentId,
+            documentType: 'FORM_1099_MISC',
+            confidence: extractedData?.confidence || 0.85
+          })
+        }
+      })
+
+      // If no specific fields found, try generic fallback
+      if (entries.length === 0) {
+        const fallbackAmount = data.totalIncome || data.amount || '0'
+        if (parseFloat(cleanAmount(fallbackAmount)) > 0) {
+          entries.push({
+            incomeType: 'OTHER_INCOME',
+            amount: cleanAmount(fallbackAmount),
+            description: `1099-MISC Income from ${data.payerName || 'Payer'}`,
+            employerName: '',
+            employerEIN: '',
+            payerName: data.payerName || '',
+            payerTIN: data.payerTIN || '',
+            federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+            isAutoPopulated: true,
+            documentId: extractedData?.documentId,
+            documentType: 'FORM_1099_MISC',
+            confidence: extractedData?.confidence || 0.85
+          })
+        }
       }
     }
 
@@ -251,6 +296,7 @@ export function EnhancedIncomeStep({
         payerTIN: data.payerTIN || '',
         federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
         isAutoPopulated: true,
+        documentId: extractedData?.documentId,
         documentType: 'FORM_1099_NEC',
         confidence: extractedData?.confidence || 0.85
       })
@@ -276,6 +322,7 @@ export function EnhancedIncomeStep({
         payerName: entry.payerName,
         payerTIN: entry.payerTIN,
         federalTaxWithheld: parseFloat(entry.federalTaxWithheld || '0'),
+        documentId: entry.documentId, // Include documentId for linking
       }
 
       const response = await fetch(`/api/tax-returns/${taxReturn.id}/income`, {
@@ -739,3 +786,4 @@ export function EnhancedIncomeStep({
     </form>
   )
 }
+
