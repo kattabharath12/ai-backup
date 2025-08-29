@@ -2062,4 +2062,16 @@ export class AzureDocumentIntelligenceService {
     
     return data;
   }
+  export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
+  const config = {
+    endpoint: process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT!,
+    apiKey: process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY!
+  };
+  
+  if (!config.endpoint || !config.apiKey) {
+    throw new Error('Azure Document Intelligence configuration is missing. Please check your environment variables.');
+  }
+  
+  return new AzureDocumentIntelligenceService(config);
+}
 }
