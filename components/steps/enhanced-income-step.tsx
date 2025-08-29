@@ -237,6 +237,8 @@ export function EnhancedIncomeStep({
 
     // Enhanced 1099-MISC data handling with comprehensive field mapping
     if (extractedData?.documentType === 'FORM_1099_MISC') {
+      console.log('🔍 [1099-MISC] Processing 1099-MISC document with data:', data);
+      
       // Map all possible 1099-MISC income fields with proper priority
       const miscFields = [
         { field: 'nonemployeeCompensation', label: 'Nonemployee Compensation' },
@@ -256,32 +258,77 @@ export function EnhancedIncomeStep({
       // Process each field that has a value
       miscFields.forEach(({ field, label }) => {
         const fieldValue = data[field]
-        if (fieldValue && parseFloat(cleanAmount(fieldValue)) > 0) {
-          entries.push({
-            incomeType: 'OTHER_INCOME',
-            amount: cleanAmount(fieldValue),
-            description: `1099-MISC ${label} from ${data.payerName || 'Payer'}`,
-            employerName: '',
-            employerEIN: '',
-            payerName: data.payerName || '',
-            payerTIN: data.payerTIN || '',
-            federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-            isAutoPopulated: true,
-            documentId: extractedData?.documentId,
-            documentType: 'FORM_1099_MISC',
-            confidence: extractedData?.confidence || 0.85
-          })
+        console.log(`🔍 [1099-MISC] Checking field ${field}:`, fieldValue);
+        
+        if (fieldValue) {
+          const cleanedAmount = cleanAmount(fieldValue)
+          const numericAmount = parseFloat(cleanedAmount)
+          console.log(`🔍 [1099-MISC] Field ${field} - cleaned: ${cleanedAmount}, numeric: ${numericAmount}`);
+          
+          if (!isNaN(numericAmount) && numericAmount > 0) {
+            console.log(`✅ [1099-MISC] Adding entry for ${field}: $${numericAmount}`);
+            entries.push({
+              incomeType: 'OTHER_INCOME',
+              amount: cleanedAmount,
+              description: `1099-MISC ${label} from ${data.payerName || 'Payer'}`,
+              employerName: '',
+              employerEIN: '',
+              payerName: data.payerName || '',
+              payerTIN: data.payerTIN || '',
+              federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+              isAutoPopulated: true,
+              documentId: extractedData?.documentId,
+              documentType: 'FORM_1099_MISC',
+              confidence: extractedData?.confidence || 0.85
+            })
+          }
         }
       })
 
-      // If no specific fields found, try generic fallback
+      // Enhanced fallback logic - try all possible field variations
       if (entries.length === 0) {
-        const fallbackAmount = data.totalIncome || data.amount || '0'
-        if (parseFloat(cleanAmount(fallbackAmount)) > 0) {
+        console.log('🔍 [1099-MISC] No entries found, trying fallback logic...');
+        
+        // Try different possible field names that might be returned by backend
+        const fallbackFields = [
+          'totalIncome', 'amount', 'totalAmount', 'miscIncome',
+          'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'box7', 'box8', 'box9', 'box10'
+        ]
+        
+        for (const fallbackField of fallbackFields) {
+          const fallbackValue = data[fallbackField]
+          if (fallbackValue) {
+            const cleanedAmount = cleanAmount(fallbackValue)
+            const numericAmount = parseFloat(cleanedAmount)
+            
+            if (!isNaN(numericAmount) && numericAmount > 0) {
+              console.log(`✅ [1099-MISC] Using fallback field ${fallbackField}: $${numericAmount}`);
+              entries.push({
+                incomeType: 'OTHER_INCOME',
+                amount: cleanedAmount,
+                description: `1099-MISC Income (${fallbackField}) from ${data.payerName || 'Payer'}`,
+                employerName: '',
+                employerEIN: '',
+                payerName: data.payerName || '',
+                payerTIN: data.payerTIN || '',
+                federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
+                isAutoPopulated: true,
+                documentId: extractedData?.documentId,
+                documentType: 'FORM_1099_MISC',
+                confidence: extractedData?.confidence || 0.85
+              })
+              break // Only use the first valid fallback field
+            }
+          }
+        }
+        
+        // If still no entries, create a generic entry to ensure data isn't lost
+        if (entries.length === 0) {
+          console.log('⚠️ [1099-MISC] No valid amounts found, creating generic entry for review');
           entries.push({
             incomeType: 'OTHER_INCOME',
-            amount: cleanAmount(fallbackAmount),
-            description: `1099-MISC Income from ${data.payerName || 'Payer'}`,
+            amount: '0',
+            description: `1099-MISC Document from ${data.payerName || 'Payer'} - Please review and enter amount manually`,
             employerName: '',
             employerEIN: '',
             payerName: data.payerName || '',
@@ -294,6 +341,8 @@ export function EnhancedIncomeStep({
           })
         }
       }
+      
+      console.log(`🔍 [1099-MISC] Final entries created: ${entries.length}`);
     }
 
     // Handle 1099-NEC data
