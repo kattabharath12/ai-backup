@@ -1,6 +1,3 @@
-
-
-
 import { DocumentAnalysisClient, AzureKeyCredential } from "@azure/ai-form-recognizer";
 import { DocumentType } from "@prisma/client";
 import { readFile } from "fs/promises";
@@ -486,24 +483,24 @@ export class AzureDocumentIntelligenceService {
       'AccountNumber': 'accountNumber',
       
       // Box 1-18 mappings
-      'Rents': 'rents',                                           // Box 1
-      'Royalties': 'royalties',                                   // Box 2
-      'OtherIncome': 'otherIncome',                              // Box 3
-      'FederalIncomeTaxWithheld': 'federalTaxWithheld',          // Box 4
-      'FishingBoatProceeds': 'fishingBoatProceeds',              // Box 5
+      'Rents': 'rents',    // Box 1
+      'Royalties': 'royalties',    // Box 2
+      'OtherIncome': 'otherIncome',    // Box 3
+      'FederalIncomeTaxWithheld': 'federalTaxWithheld',    // Box 4
+      'FishingBoatProceeds': 'fishingBoatProceeds',    // Box 5
       'MedicalAndHealthCarePayments': 'medicalHealthPayments',    // Box 6
-      'NonemployeeCompensation': 'nonemployeeCompensation',       // Box 7 (deprecated)
-      'SubstitutePayments': 'substitutePayments',                 // Box 8
-      'CropInsuranceProceeds': 'cropInsuranceProceeds',          // Box 9
-      'GrossProceedsPaidToAttorney': 'grossProceedsAttorney',         // Box 10
-      'FishPurchasedForResale': 'fishPurchases',                 // Box 11
-      'Section409ADeferrals': 'section409ADeferrals',            // Box 12
+      'NonemployeeCompensation': 'nonemployeeCompensation',    // Box 7 (deprecated)
+      'SubstitutePayments': 'substitutePayments',    // Box 8
+      'CropInsuranceProceeds': 'cropInsuranceProceeds',    // Box 9
+      'GrossProceedsPaidToAttorney': 'grossProceedsAttorney',    // Box 10
+      'FishPurchasedForResale': 'fishPurchases',    // Box 11
+      'Section409ADeferrals': 'section409ADeferrals',    // Box 12
       'ExcessGoldenParachutePayments': 'excessGoldenParachutePayments', // Box 13
       'NonqualifiedDeferredCompensation': 'nonqualifiedDeferredCompensation', // Box 14
-      'Section409AIncome': 'section409AIncome',                  // Box 15a
-      'StateTaxWithheld': 'stateTaxWithheld',                    // Box 16
-      'StatePayerNumber': 'statePayerNumber',                    // Box 17
-      'StateIncome': 'stateIncome',                              // Box 18
+      'Section409AIncome': 'section409AIncome',    // Box 15a
+      'StateTaxWithheld': 'stateTaxWithheld',    // Box 16
+      'StatePayerNumber': 'statePayerNumber',    // Box 17
+      'StateIncome': 'stateIncome',    // Box 18
       
       // Alternative field names that Azure might use
       'Box1': 'rents',
@@ -629,12 +626,12 @@ export class AzureDocumentIntelligenceService {
     
     // Define validation rules for critical fields that commonly get mismatched
     const criticalFields = [
-      'otherIncome',           // Box 3 - Often gets mapped incorrectly
+      'otherIncome',    // Box 3 - Often gets mapped incorrectly
       'fishingBoatProceeds',   // Box 5 - Often receives wrong values
       'medicalHealthPayments', // Box 6 - Often gets cross-contaminated
-      'rents',                 // Box 1 - Sometimes misaligned
-      'royalties',             // Box 2 - Sometimes misaligned
-      'federalTaxWithheld'     // Box 4 - Important for tax calculations
+      'rents',    // Box 1 - Sometimes misaligned
+      'royalties',    // Box 2 - Sometimes misaligned
+      'federalTaxWithheld'    // Box 4 - Important for tax calculations
     ];
     
     for (const field of criticalFields) {
@@ -657,61 +654,49 @@ export class AzureDocumentIntelligenceService {
     
     // Special validation for common cross-contamination patterns
     // Pattern 1: Other Income value incorrectly mapped to Fishing Boat Proceeds
-    if (structuredData.fishingBoatProceeds && !structuredData.otherIncome && 
-        ocrData.otherIncome && ocrData.fishingBoatProceeds) {
-      const structuredFishing = this.parseAmount(structuredData.fishingBoatProceeds);
-      const ocrOther = this.parseAmount(ocrData.otherIncome);
-      const ocrFishing = this.parseAmount(ocrData.fishingBoatProceeds);
+    if (structuredData.fishingBoatProceeds && !structuredData.otherIncome) {
+      const fishingValue = this.parseAmount(structuredData.fishingBoatProceeds) || 0;
+      const ocrOtherIncome = this.parseAmount(ocrData.otherIncome) || 0;
+      const ocrFishingProceeds = this.parseAmount(ocrData.fishingBoatProceeds) || 0;
       
-      // If structured fishing amount matches OCR other income amount, it's likely swapped
-      if (Math.abs(structuredFishing - ocrOther) < 100 && ocrFishing !== structuredFishing) {
-        console.log(`🔧 [Azure DI] Detected cross-contamination: Other Income/Fishing Boat Proceeds swap`);
-        correctedData.otherIncome = ocrOther;
-        correctedData.fishingBoatProceeds = ocrFishing;
-        correctionsMade += 2;
+      // If structured has fishing proceeds but OCR shows it should be other income
+      if (fishingValue > 0 && ocrOtherIncome > 0 && ocrFishingProceeds === 0 && Math.abs(fishingValue - ocrOtherIncome) < 100) {
+        console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${fishingValue} from fishingBoatProceeds to otherIncome`);
+        correctedData.otherIncome = fishingValue;
+        correctedData.fishingBoatProceeds = 0;
+        correctionsMade++;
       }
     }
     
-    // Pattern 2: Values shifted between adjacent boxes
-    const adjacentBoxPairs = [
-      ['rents', 'royalties'],
-      ['royalties', 'otherIncome'],
-      ['otherIncome', 'federalTaxWithheld'],
-      ['federalTaxWithheld', 'fishingBoatProceeds'],
-      ['fishingBoatProceeds', 'medicalHealthPayments']
-    ];
-    
-    for (const [field1, field2] of adjacentBoxPairs) {
-      const struct1 = this.parseAmount(structuredData[field1]) || 0;
-      const struct2 = this.parseAmount(structuredData[field2]) || 0;
-      const ocr1 = this.parseAmount(ocrData[field1]) || 0;
-      const ocr2 = this.parseAmount(ocrData[field2]) || 0;
+    // Pattern 2: Medical payments incorrectly mapped to other fields
+    if (structuredData.medicalHealthPayments) {
+      const medicalValue = this.parseAmount(structuredData.medicalHealthPayments) || 0;
+      const ocrMedicalValue = this.parseAmount(ocrData.medicalHealthPayments) || 0;
       
-      // Check if values are swapped between adjacent fields
-      if (struct1 > 0 && struct2 > 0 && ocr1 > 0 && ocr2 > 0) {
-        if (Math.abs(struct1 - ocr2) < 100 && Math.abs(struct2 - ocr1) < 100) {
-          console.log(`🔧 [Azure DI] Detected adjacent field swap: ${field1} ↔ ${field2}`);
-          correctedData[field1] = ocr1;
-          correctedData[field2] = ocr2;
-          correctionsMade += 2;
+      // If structured medical value doesn't match OCR, check if it was mapped to wrong field
+      if (medicalValue > 0 && ocrMedicalValue === 0) {
+        // Check if this value actually belongs to other income or fishing proceeds
+        const ocrOtherIncome = this.parseAmount(ocrData.otherIncome) || 0;
+        const ocrFishingProceeds = this.parseAmount(ocrData.fishingBoatProceeds) || 0;
+        
+        if (Math.abs(medicalValue - ocrOtherIncome) < 100) {
+          console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${medicalValue} from medicalHealthPayments to otherIncome`);
+          correctedData.otherIncome = medicalValue;
+          correctedData.medicalHealthPayments = 0;
+          correctionsMade++;
+        } else if (Math.abs(medicalValue - ocrFishingProceeds) < 100) {
+          console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${medicalValue} from medicalHealthPayments to fishingBoatProceeds`);
+          correctedData.fishingBoatProceeds = medicalValue;
+          correctedData.medicalHealthPayments = 0;
+          correctionsMade++;
         }
       }
     }
     
     if (correctionsMade > 0) {
       console.log(`✅ [Azure DI] Made ${correctionsMade} field corrections using OCR validation`);
-      
-      // Log the corrections for debugging
-      console.log('🔍 [Azure DI] Field correction summary:');
-      for (const field of criticalFields) {
-        const originalValue = this.parseAmount(structuredData[field]) || 0;
-        const correctedValue = this.parseAmount(correctedData[field]) || 0;
-        if (originalValue !== correctedValue) {
-          console.log(`  ${field}: $${originalValue} → $${correctedValue}`);
-        }
-      }
     } else {
-      console.log('✅ [Azure DI] No field corrections needed - structured extraction appears accurate');
+      console.log('✅ [Azure DI] No field corrections needed - structured data validated successfully');
     }
     
     return correctedData;
@@ -775,31 +760,47 @@ export class AzureDocumentIntelligenceService {
   private processGenericFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
     const data = { ...baseData };
     
-    // Process all available fields
-    for (const [fieldName, fieldData] of Object.entries(fields)) {
-      if (fieldData && typeof fieldData === 'object' && 'value' in fieldData) {
-        const value = (fieldData as any).value;
-        if (value !== undefined && value !== null && value !== '') {
-          data[fieldName] = typeof value === 'number' ? value : this.parseAmount(value);
-        }
+    // Process all available fields generically
+    for (const [fieldName, fieldValue] of Object.entries(fields)) {
+      if (fieldValue && typeof fieldValue === 'object' && 'value' in fieldValue) {
+        data[fieldName] = fieldValue.value;
       }
     }
     
     return data;
   }
 
-  public analyzeDocumentTypeFromOCR(ocrText: string): string {
-    console.log('🔍 [Azure DI] Analyzing document type from OCR content...');
+  private parseAmount(value: any): number {
+    if (typeof value === 'number') {
+      return value;
+    }
     
-    const formType = this.detectFormType(ocrText);
+    if (typeof value === 'string') {
+      // Remove currency symbols, commas, and whitespace
+      const cleanValue = value.replace(/[$,\s]/g, '');
+      const parsed = parseFloat(cleanValue);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    
+    return 0;
+  }
+
+  private analyzeDocumentTypeFromOCR(ocrText: string): string {
+    console.log('🔍 [Azure DI] Analyzing document type from OCR text...');
+    
+    const text = ocrText.toLowerCase();
+    
+    // First, determine if it's a W2 or 1099 form
+    const formType = this.detectFormType(text);
     
     if (formType === 'W2') {
-      console.log('✅ [Azure DI] Confirmed W2 document type');
+      console.log('✅ [Azure DI] Detected W2 form from OCR');
       return 'W2';
     } else if (formType === '1099') {
-      const specific1099Type = this.detectSpecific1099Type(ocrText);
-      console.log(`✅ [Azure DI] Detected specific 1099 type: ${specific1099Type}`);
-      return specific1099Type;
+      // For 1099 forms, determine the specific subtype
+      const specificType = this.detectSpecific1099Type(ocrText);
+      console.log(`✅ [Azure DI] Detected ${specificType} form from OCR`);
+      return specificType;
     }
     
     console.log('⚠️ [Azure DI] Could not determine document type from OCR');
@@ -1407,14 +1408,14 @@ export class AzureDocumentIntelligenceService {
     // === EMPLOYER NAME PATTERNS ===
     const employerNamePatterns = [
       {
-        name: 'EMPLOYER_NAME_MULTILINE',
-        pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
-        example: "Employer's name\nAcme Corporation"
-      },
-      {
         name: 'EMPLOYER_NAME_BASIC',
         pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)[:\s]+([A-Za-z\s&.,'-]+?)(?:\s+\d|\n|Employer'?s?\s+|EMPLOYER'?S?\s+|EIN|address|street|$)/i,
         example: "Employer's name ACME CORPORATION"
+      },
+      {
+        name: 'EMPLOYER_NAME_MULTILINE',
+        pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
+        example: "Employer's name\nAcme Corporation"
       }
     ];
     
@@ -1435,13 +1436,13 @@ export class AzureDocumentIntelligenceService {
     const employerAddressPatterns = [
       {
         name: 'EMPLOYER_ADDRESS_MULTILINE',
-        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Control\s+number|$)/i,
-        example: "Employer's address\n456 Business Ave\nBusiness City, ST 67890"
+        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|$)/i,
+        example: "Employer's address\n123 Business St\nAnytown, ST 12345"
       },
       {
         name: 'EMPLOYER_ADDRESS_BASIC',
-        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Control\s+number|$)/i,
-        example: "Employer's address: 456 Business Ave, Business City, ST 67890"
+        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|$)/i,
+        example: "Employer's address: 123 Business St, Anytown, ST 12345"
       }
     ];
     
@@ -1462,16 +1463,16 @@ export class AzureDocumentIntelligenceService {
   }
 
   /**
-   * Enhanced address parsing that extracts city, state, and zip code from a full address string
+   * Enhanced address parsing that extracts city, state, and zipCode from a full address string
    * Uses both the address string and OCR text for better accuracy
    */
-  private extractAddressParts(fullAddress: string, ocrText: string): {
+  private extractAddressParts(fullAddress: string, ocrText: string = ''): {
     street?: string;
     city?: string;
     state?: string;
     zipCode?: string;
   } {
-    console.log('🔍 [Azure DI OCR] Parsing address parts from:', fullAddress);
+    console.log('🔍 [Azure DI OCR] Parsing address components from:', fullAddress);
     
     const addressParts: {
       street?: string;
@@ -1480,126 +1481,66 @@ export class AzureDocumentIntelligenceService {
       zipCode?: string;
     } = {};
     
-    // Clean up the address string
-    const cleanAddress = fullAddress.replace(/\s+/g, ' ').trim();
+    // Clean the address string
+    const cleanAddress = fullAddress.trim().replace(/\s+/g, ' ');
     
-    // Pattern 1: Standard format "Street, City, ST ZIP"
-    const standardPattern = /^(.+?),\s*([^,]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i;
-    let match = cleanAddress.match(standardPattern);
+    // Pattern 1: Standard format "Street, City, ST ZIP" or "Street City ST ZIP"
+    const standardPattern = /^(.+?)(?:,\s*)?([A-Za-z\s]+?)(?:,\s*)?([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/;
+    const standardMatch = cleanAddress.match(standardPattern);
     
-    if (match) {
-      addressParts.street = match[1].trim();
-      addressParts.city = match[2].trim();
-      addressParts.state = match[3].toUpperCase();
-      addressParts.zipCode = match[4];
-      console.log('✅ [Azure DI OCR] Parsed using standard pattern');
+    if (standardMatch) {
+      addressParts.street = standardMatch[1].trim();
+      addressParts.city = standardMatch[2].trim();
+      addressParts.state = standardMatch[3].trim();
+      addressParts.zipCode = standardMatch[4].trim();
+      
+      console.log('✅ [Azure DI OCR] Successfully parsed address using standard pattern');
       return addressParts;
     }
     
-    // Pattern 2: "Street City, ST ZIP"
-    const noCommaPattern = /^(.+?)\s+([^,]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i;
-    match = cleanAddress.match(noCommaPattern);
-    
-    if (match) {
-      const streetAndCity = match[1].trim();
-      const lastCity = match[2].trim();
-      
-      // Try to split street and city
-      const streetCityParts = streetAndCity.split(/\s+/);
-      if (streetCityParts.length > 2) {
-        // Assume last 1-2 words before the comma are city
-        const cityWords = streetCityParts.slice(-2);
-        const streetWords = streetCityParts.slice(0, -2);
-        
-        addressParts.street = streetWords.join(' ');
-        addressParts.city = `${cityWords.join(' ')} ${lastCity}`.trim();
-      } else {
-        addressParts.street = streetAndCity;
-        addressParts.city = lastCity;
-      }
-      
-      addressParts.state = match[3].toUpperCase();
-      addressParts.zipCode = match[4];
-      console.log('✅ [Azure DI OCR] Parsed using no-comma pattern');
-      return addressParts;
-    }
-    
-    // Pattern 3: Extract ZIP code first, then work backwards
-    const zipPattern = /(\d{5}(?:-\d{4})?)/;
+    // Pattern 2: ZIP code at the end
+    const zipPattern = /(\d{5}(?:-\d{4})?)$/;
     const zipMatch = cleanAddress.match(zipPattern);
-    
     if (zipMatch) {
       addressParts.zipCode = zipMatch[1];
-      
-      // Extract state (2 letters before ZIP)
-      const statePattern = /([A-Z]{2})\s+\d{5}(?:-\d{4})?/i;
-      const stateMatch = cleanAddress.match(statePattern);
-      
-      if (stateMatch) {
-        addressParts.state = stateMatch[1].toUpperCase();
-        
-        // Everything before state is street and city
-        const beforeState = cleanAddress.substring(0, stateMatch.index).trim();
-        
-        // Try to split into street and city
-        const parts = beforeState.split(',');
-        if (parts.length >= 2) {
-          addressParts.street = parts[0].trim();
-          addressParts.city = parts[1].trim();
-        } else {
-          // Try to split by common city indicators
-          const cityPattern = /^(.+?)\s+((?:[A-Z][a-z]+\s*)+)$/;
-          const cityMatch = beforeState.match(cityPattern);
-          
-          if (cityMatch) {
-            addressParts.street = cityMatch[1].trim();
-            addressParts.city = cityMatch[2].trim();
-          } else {
-            // Fallback: assume everything is street
-            addressParts.street = beforeState;
-          }
-        }
-      }
-      
-      console.log('✅ [Azure DI OCR] Parsed using ZIP-first pattern');
-      return addressParts;
+      console.log('✅ [Azure DI OCR] Found ZIP code:', addressParts.zipCode);
     }
     
-    // Pattern 4: Try to extract from OCR text context
-    if (ocrText) {
-      console.log('🔍 [Azure DI OCR] Attempting to extract address parts from OCR context...');
-      
-      // Look for ZIP codes in the OCR text near the address
-      const ocrZipMatches = ocrText.match(/\d{5}(?:-\d{4})?/g);
-      if (ocrZipMatches) {
-        // Use the first ZIP code found
-        addressParts.zipCode = ocrZipMatches[0];
+    // Pattern 3: State abbreviation (2 uppercase letters) before ZIP
+    const statePattern = /\b([A-Z]{2})\s+\d{5}(?:-\d{4})?$/;
+    const stateMatch = cleanAddress.match(statePattern);
+    if (stateMatch) {
+      addressParts.state = stateMatch[1];
+      console.log('✅ [Azure DI OCR] Found state:', addressParts.state);
+    }
+    
+    // Pattern 4: Try to extract city (word(s) before state)
+    if (addressParts.state) {
+      const cityPattern = new RegExp(`(.+?)\\s+${addressParts.state}\\s+\\d{5}`, 'i');
+      const cityMatch = cleanAddress.match(cityPattern);
+      if (cityMatch) {
+        // Remove potential street part and get the last part as city
+        const beforeState = cityMatch[1].trim();
+        const words = beforeState.split(/\s+/);
         
-        // Look for state abbreviations near the ZIP
-        const statePattern = new RegExp(`([A-Z]{2})\\s+${addressParts.zipCode}`, 'i');
-        const stateMatch = ocrText.match(statePattern);
-        
-        if (stateMatch) {
-          addressParts.state = stateMatch[1].toUpperCase();
+        // Heuristic: if there are more than 3 words, assume the last 1-2 words are the city
+        if (words.length > 3) {
+          addressParts.city = words.slice(-2).join(' ').replace(/,$/, '');
+          addressParts.street = words.slice(0, -2).join(' ').replace(/,$/, '');
+        } else if (words.length > 1) {
+          addressParts.city = words.slice(-1).join(' ').replace(/,$/, '');
+          addressParts.street = words.slice(0, -1).join(' ').replace(/,$/, '');
         }
-      }
-      
-      // If we still don't have city, try to extract from the original address
-      if (!addressParts.city && addressParts.state) {
-        const beforeState = fullAddress.replace(new RegExp(`\\s*${addressParts.state}.*$`, 'i'), '');
-        const parts = beforeState.split(',');
         
-        if (parts.length >= 2) {
-          addressParts.street = parts[0].trim();
-          addressParts.city = parts[parts.length - 1].trim();
-        }
+        console.log('✅ [Azure DI OCR] Extracted city and street using heuristics');
       }
     }
     
-    // Fallback: if we couldn't parse properly, at least try to get the street
+    // Fallback: if we couldn't parse properly, try to extract what we can
     if (!addressParts.street && !addressParts.city) {
-      // Remove ZIP and state from the end
       let remaining = cleanAddress;
+      
+      // Remove ZIP code from the end
       if (addressParts.zipCode) {
         remaining = remaining.replace(new RegExp(`\\s*${addressParts.zipCode}$`), '');
       }
@@ -2100,8 +2041,8 @@ export class AzureDocumentIntelligenceService {
     
     const data = { ...baseData };
     
-    // Extract any monetary amounts found in the text
-    const amountPattern = /\$?([0-9,]+\.?\d{0,2})/g;
+    // Extract any dollar amounts found in the text
+    const amountPattern = /\$([0-9,]+\.?\d{0,2})/g;
     const amounts = [];
     let match;
     
@@ -2115,43 +2056,10 @@ export class AzureDocumentIntelligenceService {
     }
     
     if (amounts.length > 0) {
-      data.extractedAmountsCount = amounts.length;
-      data.firstAmount = amounts[0];
-      console.log(`✅ [Azure DI OCR] Found ${amounts.length} monetary amounts`);
+      data.extractedAmounts = amounts;
+      console.log(`✅ [Azure DI OCR] Found ${amounts.length} dollar amounts:`, amounts);
     }
     
     return data;
   }
-
-  // === UTILITY METHODS ===
-  
-  private parseAmount(value: any): number {
-    if (typeof value === 'number') {
-      return value;
-    }
-    
-    if (typeof value === 'string') {
-      // Remove currency symbols and commas
-      const cleanValue = value.replace(/[$,]/g, '');
-      const parsed = parseFloat(cleanValue);
-      return isNaN(parsed) ? 0 : parsed;
-    }
-    
-    return 0;
-  }
-}
-
-// Factory function to create service instance
-export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
-  const endpoint = process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT;
-  const apiKey = process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY;
-  
-  if (!endpoint || !apiKey) {
-    throw new Error('Azure Document Intelligence configuration missing');
-  }
-  
-  return new AzureDocumentIntelligenceService({
-    endpoint,
-    apiKey
-  });
 }
