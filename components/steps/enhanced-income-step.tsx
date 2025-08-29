@@ -186,7 +186,7 @@ export function EnhancedIncomeStep({
     const data = extractedData?.extractedData || extractedData
     
     // DEBUG: Log all available fields for troubleshooting
-    console.log('🔍 [CONVERT] Available fields in extracted data:', Object.keys(data));
+    console.log('🔍 [CONVERT] Available fields in extracted data:', Object.keys(data || {}));
     console.log('🔍 [CONVERT] Document type:', extractedData?.documentType);
     
     // DEBUG: Log field values for critical 1099-MISC fields
@@ -254,115 +254,229 @@ export function EnhancedIncomeStep({
       })
     }
 
-    // Enhanced 1099-MISC data handling with comprehensive field mapping
+    // Enhanced 1099-MISC data handling - Create separate entries for different income types
     if (extractedData?.documentType === 'FORM_1099_MISC') {
       console.log('🔍 [CONVERT] Processing 1099-MISC document with data:', data);
       
-      // Map all possible 1099-MISC income fields with proper priority
-      const miscFields = [
-        { field: 'nonemployeeCompensation', label: 'Nonemployee Compensation', box: 'Box 1' },
-        { field: 'rents', label: 'Rents', box: 'Box 2' },
-        { field: 'royalties', label: 'Royalties', box: 'Box 3' },
-        { field: 'otherIncome', label: 'Other Income', box: 'Box 4' },
-        { field: 'fishingBoatProceeds', label: 'Fishing Boat Proceeds', box: 'Box 5' },
-        { field: 'medicalHealthPayments', label: 'Medical/Healthcare Payments', box: 'Box 6' },
-        { field: 'cropInsuranceProceeds', label: 'Crop Insurance Proceeds', box: 'Box 7' },
-        { field: 'grossProceedsAttorney', label: 'Gross Proceeds to Attorney', box: 'Box 8' },
-        { field: 'section409ADeferrals', label: 'Section 409A Deferrals', box: 'Box 9' },
-        { field: 'excessGoldenParachutePayments', label: 'Excess Golden Parachute', box: 'Box 10' },
-        { field: 'nonqualifiedDeferredCompensation', label: 'Nonqualified Deferred Compensation', box: 'Box 11' },
-        { field: 'stateTaxWithheld', label: 'State Tax Withheld', box: 'Box 12' }
-      ]
-
-      // Process each field that has a value
-      miscFields.forEach(({ field, label, box }) => {
-        const fieldValue = data[field]
-        console.log(`🔍 [CONVERT] Checking field ${field} (${box}):`, fieldValue);
-        
-        if (fieldValue) {
-          const cleanedAmount = cleanAmount(fieldValue)
-          const numericAmount = parseFloat(cleanedAmount)
-          console.log(`🔍 [CONVERT] Field ${field} - cleaned: ${cleanedAmount}, numeric: ${numericAmount}`);
-          
-          if (!isNaN(numericAmount) && numericAmount > 0) {
-            console.log(`✅ [CONVERT] Adding entry for ${field}: $${numericAmount}`);
-            entries.push({
-              incomeType: 'OTHER_INCOME',
-              amount: cleanedAmount,
-              description: `1099-MISC ${label} (${box}) from ${data.payerName || 'Payer'}`,
-              employerName: '',
-              employerEIN: '',
-              payerName: data.payerName || '',
-              payerTIN: data.payerTIN || '',
-              federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-              isAutoPopulated: true,
-              documentId: extractedData?.documentId,
-              documentType: 'FORM_1099_MISC',
-              confidence: extractedData?.confidence || 0.85
-            })
-          }
-        }
-      })
-
-      // Enhanced fallback logic - try all possible field variations
-      if (entries.length === 0) {
-        console.log('🔍 [CONVERT] No entries found, trying fallback logic...');
-        
-        // Try different possible field names that might be returned by backend
-        const fallbackFields = [
-          'totalIncome', 'amount', 'totalAmount', 'miscIncome',
-          'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'box7', 'box8', 'box9', 'box10', 'box11', 'box12',
-          'Box1', 'Box2', 'Box3', 'Box4', 'Box5', 'Box6', 'Box7', 'Box8', 'Box9', 'Box10', 'Box11', 'Box12'
-        ]
-        
-        for (const fallbackField of fallbackFields) {
-          const fallbackValue = data[fallbackField]
-          if (fallbackValue) {
-            const cleanedAmount = cleanAmount(fallbackValue)
-            const numericAmount = parseFloat(cleanedAmount)
-            
-            if (!isNaN(numericAmount) && numericAmount > 0) {
-              console.log(`✅ [CONVERT] Using fallback field ${fallbackField}: $${numericAmount}`);
-              entries.push({
-                incomeType: 'OTHER_INCOME',
-                amount: cleanedAmount,
-                description: `1099-MISC Income (${fallbackField}) from ${data.payerName || 'Payer'}`,
-                employerName: '',
-                employerEIN: '',
-                payerName: data.payerName || '',
-                payerTIN: data.payerTIN || '',
-                federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-                isAutoPopulated: true,
-                documentId: extractedData?.documentId,
-                documentType: 'FORM_1099_MISC',
-                confidence: extractedData?.confidence || 0.85
-              })
-              break // Only use the first valid fallback field
-            }
-          }
-        }
-        
-        // If still no entries, create a generic entry to ensure data isn't lost
-        if (entries.length === 0) {
-          console.log('⚠️ [CONVERT] No valid amounts found, creating generic entry for review');
-          entries.push({
-            incomeType: 'OTHER_INCOME',
-            amount: '0',
-            description: `1099-MISC Document from ${data.payerName || 'Payer'} - Please review and enter amount manually`,
-            employerName: '',
-            employerEIN: '',
-            payerName: data.payerName || '',
-            payerTIN: data.payerTIN || '',
-            federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-            isAutoPopulated: true,
-            documentId: extractedData?.documentId,
-            documentType: 'FORM_1099_MISC',
-            confidence: extractedData?.confidence || 0.85
-          })
-        }
-      }
+      const payerName = data.payerName || 'Payer'
+      const payerTIN = data.payerTIN || ''
+      const federalTaxWithheld = cleanAmount(data.federalTaxWithheld || '0')
       
-      console.log(`🔍 [CONVERT] Final 1099-MISC entries created: ${entries.length}`);
+      // Rents (Box 1)
+      if (data.rents && parseFloat(cleanAmount(data.rents)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.rents),
+          description: `Rental Income from ${payerName} (1099-MISC Box 1)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Royalties (Box 2)
+      if (data.royalties && parseFloat(cleanAmount(data.royalties)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.royalties),
+          description: `Royalty Income from ${payerName} (1099-MISC Box 2)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Other Income (Box 3)
+      if (data.otherIncome && parseFloat(cleanAmount(data.otherIncome)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.otherIncome),
+          description: `Other Income from ${payerName} (1099-MISC Box 3)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Fishing Boat Proceeds (Box 5)
+      if (data.fishingBoatProceeds && parseFloat(cleanAmount(data.fishingBoatProceeds)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.fishingBoatProceeds),
+          description: `Fishing Boat Proceeds from ${payerName} (1099-MISC Box 5)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Medical and Health Care Payments (Box 6)
+      if (data.medicalHealthPayments && parseFloat(cleanAmount(data.medicalHealthPayments)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.medicalHealthPayments),
+          description: `Medical/Health Care Payments from ${payerName} (1099-MISC Box 6)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Nonemployee Compensation (Box 7)
+      if (data.nonemployeeCompensation && parseFloat(cleanAmount(data.nonemployeeCompensation)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.nonemployeeCompensation),
+          description: `Nonemployee Compensation from ${payerName} (1099-MISC Box 7)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Substitute Payments in Lieu of Dividends or Interest (Box 8)
+      if (data.substitutePayments && parseFloat(cleanAmount(data.substitutePayments)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.substitutePayments),
+          description: `Substitute Payments from ${payerName} (1099-MISC Box 8)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Crop Insurance Proceeds (Box 9)
+      if (data.cropInsuranceProceeds && parseFloat(cleanAmount(data.cropInsuranceProceeds)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.cropInsuranceProceeds),
+          description: `Crop Insurance Proceeds from ${payerName} (1099-MISC Box 9)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Gross Proceeds Paid to an Attorney (Box 10)
+      if (data.grossProceedsAttorney && parseFloat(cleanAmount(data.grossProceedsAttorney)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.grossProceedsAttorney),
+          description: `Attorney Gross Proceeds from ${payerName} (1099-MISC Box 10)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Section 409A Deferrals (Box 12)
+      if (data.section409ADeferrals && parseFloat(cleanAmount(data.section409ADeferrals)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.section409ADeferrals),
+          description: `Section 409A Deferrals from ${payerName} (1099-MISC Box 12)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Excess Golden Parachute Payments (Box 13)
+      if (data.excessGoldenParachutePayments && parseFloat(cleanAmount(data.excessGoldenParachutePayments)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.excessGoldenParachutePayments),
+          description: `Excess Golden Parachute Payments from ${payerName} (1099-MISC Box 13)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
+
+      // Nonqualified Deferred Compensation (Box 14)
+      if (data.nonqualifiedDeferredCompensation && parseFloat(cleanAmount(data.nonqualifiedDeferredCompensation)) > 0) {
+        entries.push({
+          incomeType: 'OTHER_INCOME',
+          amount: cleanAmount(data.nonqualifiedDeferredCompensation),
+          description: `Nonqualified Deferred Compensation from ${payerName} (1099-MISC Box 14)`,
+          employerName: '',
+          employerEIN: '',
+          payerName: payerName,
+          payerTIN: payerTIN,
+          federalTaxWithheld: federalTaxWithheld,
+          isAutoPopulated: true,
+          documentId: extractedData?.documentId,
+          documentType: 'FORM_1099_MISC',
+          confidence: extractedData?.confidence || 0.85
+        })
+      }
     }
 
     // Handle 1099-NEC data
@@ -384,71 +498,16 @@ export function EnhancedIncomeStep({
       })
     }
 
-    // Handle 1099-G (Government payments)
-    if (extractedData?.documentType === 'FORM_1099_G' || data?.unemploymentCompensation) {
-      console.log('🔍 [CONVERT] Processing 1099-G data...');
-      entries.push({
-        incomeType: 'UNEMPLOYMENT',
-        amount: cleanAmount(data.unemploymentCompensation || '0'),
-        description: `1099-G Unemployment Compensation from ${data.payerName || 'Government Agency'}`,
-        employerName: '',
-        employerEIN: '',
-        payerName: data.payerName || '',
-        payerTIN: data.payerTIN || '',
-        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-        isAutoPopulated: true,
-        documentId: extractedData?.documentId,
-        documentType: 'FORM_1099_G',
-        confidence: extractedData?.confidence || 0.85
-      })
-    }
-
-    // Handle 1099-R (Retirement distributions)
-    if (extractedData?.documentType === 'FORM_1099_R' || data?.grossDistribution) {
-      console.log('🔍 [CONVERT] Processing 1099-R data...');
-      entries.push({
-        incomeType: 'RETIREMENT_DISTRIBUTIONS',
-        amount: cleanAmount(data.grossDistribution || '0'),
-        description: `1099-R Retirement Distribution from ${data.payerName || 'Retirement Plan'}`,
-        employerName: '',
-        employerEIN: '',
-        payerName: data.payerName || '',
-        payerTIN: data.payerTIN || '',
-        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-        isAutoPopulated: true,
-        documentId: extractedData?.documentId,
-        documentType: 'FORM_1099_R',
-        confidence: extractedData?.confidence || 0.85
-      })
-    }
-
-    // Handle SSA-1099 (Social Security)
-    if (extractedData?.documentType === 'SSA_1099' || data?.socialSecurityBenefits) {
-      console.log('🔍 [CONVERT] Processing SSA-1099 data...');
-      entries.push({
-        incomeType: 'SOCIAL_SECURITY',
-        amount: cleanAmount(data.socialSecurityBenefits || '0'),
-        description: `SSA-1099 Social Security Benefits from ${data.payerName || 'Social Security Administration'}`,
-        employerName: '',
-        employerEIN: '',
-        payerName: data.payerName || 'Social Security Administration',
-        payerTIN: data.payerTIN || '',
-        federalTaxWithheld: cleanAmount(data.federalTaxWithheld || '0'),
-        isAutoPopulated: true,
-        documentId: extractedData?.documentId,
-        documentType: 'SSA_1099',
-        confidence: extractedData?.confidence || 0.85
-      })
-    }
-
     console.log(`🔍 [CONVERT] Total entries created: ${entries.length}`);
-    return entries.filter(entry => parseFloat(entry.amount) >= 0) // Include zero amounts for manual review
+    return entries.filter(entry => parseFloat(entry.amount) > 0)
   }
 
-  const cleanAmount = (amount: string): string => {
-    if (!amount) return '0'
+  const cleanAmount = (amount: string | number): string => {
+    if (!amount && amount !== 0) return '0'
+    // Handle both string and number inputs
+    const amountStr = amount.toString()
     // Remove currency symbols, commas, and extra spaces
-    return amount.toString().replace(/[$,\s]/g, '').replace(/[^\d.-]/g, '') || '0'
+    return amountStr.replace(/[$,\s]/g, '').replace(/[^\d.-]/g, '') || '0'
   }
 
   const handleAcceptAutoEntry = async (entry: AutoPopulatedEntry, index: number) => {
@@ -858,7 +917,7 @@ export function EnhancedIncomeStep({
               className="w-full"
             >
               <Plus className="mr-2 h-4 w-4" />
-              Add Income Entry
+              Add Income Source
             </Button>
           </CardContent>
         </Card>
