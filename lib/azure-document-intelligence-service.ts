@@ -1,6 +1,3 @@
-
-
-
 import { DocumentAnalysisClient, AzureKeyCredential } from "@azure/ai-form-recognizer";
 import { DocumentType } from "@prisma/client";
 import { readFile } from "fs/promises";
@@ -486,24 +483,24 @@ export class AzureDocumentIntelligenceService {
       'AccountNumber': 'accountNumber',
       
       // Box 1-18 mappings
-      'Rents': 'rents',                                           // Box 1
-      'Royalties': 'royalties',                                   // Box 2
-      'OtherIncome': 'otherIncome',                              // Box 3
-      'FederalIncomeTaxWithheld': 'federalTaxWithheld',          // Box 4
-      'FishingBoatProceeds': 'fishingBoatProceeds',              // Box 5
+      'Rents': 'rents',    // Box 1
+      'Royalties': 'royalties',    // Box 2
+      'OtherIncome': 'otherIncome',    // Box 3
+      'FederalIncomeTaxWithheld': 'federalTaxWithheld',    // Box 4
+      'FishingBoatProceeds': 'fishingBoatProceeds',    // Box 5
       'MedicalAndHealthCarePayments': 'medicalHealthPayments',    // Box 6
-      'NonemployeeCompensation': 'nonemployeeCompensation',       // Box 7 (deprecated)
-      'SubstitutePayments': 'substitutePayments',                 // Box 8
-      'CropInsuranceProceeds': 'cropInsuranceProceeds',          // Box 9
-      'GrossProceedsPaidToAttorney': 'grossProceedsAttorney',         // Box 10
-      'FishPurchasedForResale': 'fishPurchases',                 // Box 11
-      'Section409ADeferrals': 'section409ADeferrals',            // Box 12
+      'NonemployeeCompensation': 'nonemployeeCompensation',    // Box 7 (deprecated)
+      'SubstitutePayments': 'substitutePayments',    // Box 8
+      'CropInsuranceProceeds': 'cropInsuranceProceeds',    // Box 9
+      'GrossProceedsPaidToAttorney': 'grossProceedsAttorney',    // Box 10
+      'FishPurchasedForResale': 'fishPurchases',    // Box 11
+      'Section409ADeferrals': 'section409ADeferrals',    // Box 12
       'ExcessGoldenParachutePayments': 'excessGoldenParachutePayments', // Box 13
       'NonqualifiedDeferredCompensation': 'nonqualifiedDeferredCompensation', // Box 14
-      'Section409AIncome': 'section409AIncome',                  // Box 15a
-      'StateTaxWithheld': 'stateTaxWithheld',                    // Box 16
-      'StatePayerNumber': 'statePayerNumber',                    // Box 17
-      'StateIncome': 'stateIncome',                              // Box 18
+      'Section409AIncome': 'section409AIncome',    // Box 15a
+      'StateTaxWithheld': 'stateTaxWithheld',    // Box 16
+      'StatePayerNumber': 'statePayerNumber',    // Box 17
+      'StateIncome': 'stateIncome',    // Box 18
       
       // Alternative field names that Azure might use
       'Box1': 'rents',
@@ -629,12 +626,12 @@ export class AzureDocumentIntelligenceService {
     
     // Define validation rules for critical fields that commonly get mismatched
     const criticalFields = [
-      'otherIncome',           // Box 3 - Often gets mapped incorrectly
+      'otherIncome',    // Box 3 - Often gets mapped incorrectly
       'fishingBoatProceeds',   // Box 5 - Often receives wrong values
       'medicalHealthPayments', // Box 6 - Often gets cross-contaminated
-      'rents',                 // Box 1 - Sometimes misaligned
-      'royalties',             // Box 2 - Sometimes misaligned
-      'federalTaxWithheld'     // Box 4 - Important for tax calculations
+      'rents',    // Box 1 - Sometimes misaligned
+      'royalties',    // Box 2 - Sometimes misaligned
+      'federalTaxWithheld'    // Box 4 - Important for tax calculations
     ];
     
     for (const field of criticalFields) {
@@ -657,61 +654,49 @@ export class AzureDocumentIntelligenceService {
     
     // Special validation for common cross-contamination patterns
     // Pattern 1: Other Income value incorrectly mapped to Fishing Boat Proceeds
-    if (structuredData.fishingBoatProceeds && !structuredData.otherIncome && 
-        ocrData.otherIncome && ocrData.fishingBoatProceeds) {
-      const structuredFishing = this.parseAmount(structuredData.fishingBoatProceeds);
-      const ocrOther = this.parseAmount(ocrData.otherIncome);
-      const ocrFishing = this.parseAmount(ocrData.fishingBoatProceeds);
+    if (structuredData.fishingBoatProceeds && !structuredData.otherIncome) {
+      const fishingValue = this.parseAmount(structuredData.fishingBoatProceeds) || 0;
+      const ocrOtherIncome = this.parseAmount(ocrData.otherIncome) || 0;
+      const ocrFishingProceeds = this.parseAmount(ocrData.fishingBoatProceeds) || 0;
       
-      // If structured fishing amount matches OCR other income amount, it's likely swapped
-      if (Math.abs(structuredFishing - ocrOther) < 100 && ocrFishing !== structuredFishing) {
-        console.log(`🔧 [Azure DI] Detected cross-contamination: Other Income/Fishing Boat Proceeds swap`);
-        correctedData.otherIncome = ocrOther;
-        correctedData.fishingBoatProceeds = ocrFishing;
-        correctionsMade += 2;
+      // If structured has fishing proceeds but OCR shows it should be other income
+      if (fishingValue > 0 && ocrOtherIncome > 0 && ocrFishingProceeds === 0 && Math.abs(fishingValue - ocrOtherIncome) < 100) {
+        console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${fishingValue} from fishingBoatProceeds to otherIncome`);
+        correctedData.otherIncome = fishingValue;
+        correctedData.fishingBoatProceeds = 0;
+        correctionsMade++;
       }
     }
     
-    // Pattern 2: Values shifted between adjacent boxes
-    const adjacentBoxPairs = [
-      ['rents', 'royalties'],
-      ['royalties', 'otherIncome'],
-      ['otherIncome', 'federalTaxWithheld'],
-      ['federalTaxWithheld', 'fishingBoatProceeds'],
-      ['fishingBoatProceeds', 'medicalHealthPayments']
-    ];
-    
-    for (const [field1, field2] of adjacentBoxPairs) {
-      const struct1 = this.parseAmount(structuredData[field1]) || 0;
-      const struct2 = this.parseAmount(structuredData[field2]) || 0;
-      const ocr1 = this.parseAmount(ocrData[field1]) || 0;
-      const ocr2 = this.parseAmount(ocrData[field2]) || 0;
+    // Pattern 2: Medical payments incorrectly mapped to other fields
+    if (structuredData.medicalHealthPayments) {
+      const medicalValue = this.parseAmount(structuredData.medicalHealthPayments) || 0;
+      const ocrMedicalValue = this.parseAmount(ocrData.medicalHealthPayments) || 0;
       
-      // Check if values are swapped between adjacent fields
-      if (struct1 > 0 && struct2 > 0 && ocr1 > 0 && ocr2 > 0) {
-        if (Math.abs(struct1 - ocr2) < 100 && Math.abs(struct2 - ocr1) < 100) {
-          console.log(`🔧 [Azure DI] Detected adjacent field swap: ${field1} ↔ ${field2}`);
-          correctedData[field1] = ocr1;
-          correctedData[field2] = ocr2;
-          correctionsMade += 2;
+      // If structured medical value doesn't match OCR, check if it was mapped to wrong field
+      if (medicalValue > 0 && ocrMedicalValue === 0) {
+        // Check if this value actually belongs to other income or fishing proceeds
+        const ocrOtherIncome = this.parseAmount(ocrData.otherIncome) || 0;
+        const ocrFishingProceeds = this.parseAmount(ocrData.fishingBoatProceeds) || 0;
+        
+        if (Math.abs(medicalValue - ocrOtherIncome) < 100) {
+          console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${medicalValue} from medicalHealthPayments to otherIncome`);
+          correctedData.otherIncome = medicalValue;
+          correctedData.medicalHealthPayments = 0;
+          correctionsMade++;
+        } else if (Math.abs(medicalValue - ocrFishingProceeds) < 100) {
+          console.log(`🔧 [Azure DI] Cross-contamination fix: Moving $${medicalValue} from medicalHealthPayments to fishingBoatProceeds`);
+          correctedData.fishingBoatProceeds = medicalValue;
+          correctedData.medicalHealthPayments = 0;
+          correctionsMade++;
         }
       }
     }
     
     if (correctionsMade > 0) {
       console.log(`✅ [Azure DI] Made ${correctionsMade} field corrections using OCR validation`);
-      
-      // Log the corrections for debugging
-      console.log('🔍 [Azure DI] Field correction summary:');
-      for (const field of criticalFields) {
-        const originalValue = this.parseAmount(structuredData[field]) || 0;
-        const correctedValue = this.parseAmount(correctedData[field]) || 0;
-        if (originalValue !== correctedValue) {
-          console.log(`  ${field}: $${originalValue} → $${correctedValue}`);
-        }
-      }
     } else {
-      console.log('✅ [Azure DI] No field corrections needed - structured extraction appears accurate');
+      console.log('✅ [Azure DI] No field corrections needed - structured data validated successfully');
     }
     
     return correctedData;
@@ -775,31 +760,47 @@ export class AzureDocumentIntelligenceService {
   private processGenericFields(fields: any, baseData: ExtractedFieldData): ExtractedFieldData {
     const data = { ...baseData };
     
-    // Process all available fields
-    for (const [fieldName, fieldData] of Object.entries(fields)) {
-      if (fieldData && typeof fieldData === 'object' && 'value' in fieldData) {
-        const value = (fieldData as any).value;
-        if (value !== undefined && value !== null && value !== '') {
-          data[fieldName] = typeof value === 'number' ? value : this.parseAmount(value);
-        }
+    // Process all available fields generically
+    for (const [fieldName, fieldValue] of Object.entries(fields)) {
+      if (fieldValue && typeof fieldValue === 'object' && 'value' in fieldValue) {
+        data[fieldName] = fieldValue.value;
       }
     }
     
     return data;
   }
 
-  public analyzeDocumentTypeFromOCR(ocrText: string): string {
-    console.log('🔍 [Azure DI] Analyzing document type from OCR content...');
+  private parseAmount(value: any): number {
+    if (typeof value === 'number') {
+      return value;
+    }
     
-    const formType = this.detectFormType(ocrText);
+    if (typeof value === 'string') {
+      // Remove currency symbols, commas, and whitespace
+      const cleanValue = value.replace(/[$,\s]/g, '');
+      const parsed = parseFloat(cleanValue);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    
+    return 0;
+  }
+
+  private analyzeDocumentTypeFromOCR(ocrText: string): string {
+    console.log('🔍 [Azure DI] Analyzing document type from OCR text...');
+    
+    const text = ocrText.toLowerCase();
+    
+    // First, determine if it's a W2 or 1099 form
+    const formType = this.detectFormType(text);
     
     if (formType === 'W2') {
-      console.log('✅ [Azure DI] Confirmed W2 document type');
+      console.log('✅ [Azure DI] Detected W2 form from OCR');
       return 'W2';
     } else if (formType === '1099') {
-      const specific1099Type = this.detectSpecific1099Type(ocrText);
-      console.log(`✅ [Azure DI] Detected specific 1099 type: ${specific1099Type}`);
-      return specific1099Type;
+      // For 1099 forms, determine the specific subtype
+      const specificType = this.detectSpecific1099Type(ocrText);
+      console.log(`✅ [Azure DI] Detected ${specificType} form from OCR`);
+      return specificType;
     }
     
     console.log('⚠️ [Azure DI] Could not determine document type from OCR');
@@ -1407,14 +1408,14 @@ export class AzureDocumentIntelligenceService {
     // === EMPLOYER NAME PATTERNS ===
     const employerNamePatterns = [
       {
-        name: 'EMPLOYER_NAME_MULTILINE',
-        pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
-        example: "Employer's name\nAcme Corporation"
-      },
-      {
         name: 'EMPLOYER_NAME_BASIC',
         pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)[:\s]+([A-Za-z\s&.,'-]+?)(?:\s+\d|\n|Employer'?s?\s+|EMPLOYER'?S?\s+|EIN|address|street|$)/i,
         example: "Employer's name ACME CORPORATION"
+      },
+      {
+        name: 'EMPLOYER_NAME_MULTILINE',
+        pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
+        example: "Employer's name\nAcme Corporation"
       }
     ];
     
@@ -1435,13 +1436,13 @@ export class AzureDocumentIntelligenceService {
     const employerAddressPatterns = [
       {
         name: 'EMPLOYER_ADDRESS_MULTILINE',
-        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Control\s+number|$)/i,
-        example: "Employer's address\n456 Business Ave\nBusiness City, ST 67890"
+        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|$)/i,
+        example: "Employer's address\n123 Business St\nAnytown, ST 12345"
       },
       {
         name: 'EMPLOYER_ADDRESS_BASIC',
-        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Control\s+number|$)/i,
-        example: "Employer's address: 456 Business Ave, Business City, ST 67890"
+        pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|$)/i,
+        example: "Employer's address: 123 Business St, Anytown, ST 12345"
       }
     ];
     
@@ -1462,16 +1463,16 @@ export class AzureDocumentIntelligenceService {
   }
 
   /**
-   * Enhanced address parsing that extracts city, state, and zip code from a full address string
+   * Enhanced address parsing that extracts city, state, and zipCode from a full address string
    * Uses both the address string and OCR text for better accuracy
    */
-  private extractAddressParts(fullAddress: string, ocrText: string): {
+  private extractAddressParts(fullAddress: string, ocrText: string = ''): {
     street?: string;
     city?: string;
     state?: string;
     zipCode?: string;
   } {
-    console.log('🔍 [Azure DI OCR] Parsing address parts from:', fullAddress);
+    console.log('🔍 [Azure DI OCR] Parsing address components from:', fullAddress);
     
     const addressParts: {
       street?: string;
@@ -1480,126 +1481,66 @@ export class AzureDocumentIntelligenceService {
       zipCode?: string;
     } = {};
     
-    // Clean up the address string
-    const cleanAddress = fullAddress.replace(/\s+/g, ' ').trim();
+    // Clean the address string
+    const cleanAddress = fullAddress.trim().replace(/\s+/g, ' ');
     
-    // Pattern 1: Standard format "Street, City, ST ZIP"
-    const standardPattern = /^(.+?),\s*([^,]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i;
-    let match = cleanAddress.match(standardPattern);
+    // Pattern 1: Standard format "Street, City, ST ZIP" or "Street City ST ZIP"
+    const standardPattern = /^(.+?)(?:,\s*)?([A-Za-z\s]+?)(?:,\s*)?([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/;
+    const standardMatch = cleanAddress.match(standardPattern);
     
-    if (match) {
-      addressParts.street = match[1].trim();
-      addressParts.city = match[2].trim();
-      addressParts.state = match[3].toUpperCase();
-      addressParts.zipCode = match[4];
-      console.log('✅ [Azure DI OCR] Parsed using standard pattern');
+    if (standardMatch) {
+      addressParts.street = standardMatch[1].trim();
+      addressParts.city = standardMatch[2].trim();
+      addressParts.state = standardMatch[3].trim();
+      addressParts.zipCode = standardMatch[4].trim();
+      
+      console.log('✅ [Azure DI OCR] Successfully parsed address using standard pattern');
       return addressParts;
     }
     
-    // Pattern 2: "Street City, ST ZIP"
-    const noCommaPattern = /^(.+?)\s+([^,]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i;
-    match = cleanAddress.match(noCommaPattern);
-    
-    if (match) {
-      const streetAndCity = match[1].trim();
-      const lastCity = match[2].trim();
-      
-      // Try to split street and city
-      const streetCityParts = streetAndCity.split(/\s+/);
-      if (streetCityParts.length > 2) {
-        // Assume last 1-2 words before the comma are city
-        const cityWords = streetCityParts.slice(-2);
-        const streetWords = streetCityParts.slice(0, -2);
-        
-        addressParts.street = streetWords.join(' ');
-        addressParts.city = `${cityWords.join(' ')} ${lastCity}`.trim();
-      } else {
-        addressParts.street = streetAndCity;
-        addressParts.city = lastCity;
-      }
-      
-      addressParts.state = match[3].toUpperCase();
-      addressParts.zipCode = match[4];
-      console.log('✅ [Azure DI OCR] Parsed using no-comma pattern');
-      return addressParts;
-    }
-    
-    // Pattern 3: Extract ZIP code first, then work backwards
-    const zipPattern = /(\d{5}(?:-\d{4})?)/;
+    // Pattern 2: ZIP code at the end
+    const zipPattern = /(\d{5}(?:-\d{4})?)$/;
     const zipMatch = cleanAddress.match(zipPattern);
-    
     if (zipMatch) {
       addressParts.zipCode = zipMatch[1];
-      
-      // Extract state (2 letters before ZIP)
-      const statePattern = /([A-Z]{2})\s+\d{5}(?:-\d{4})?/i;
-      const stateMatch = cleanAddress.match(statePattern);
-      
-      if (stateMatch) {
-        addressParts.state = stateMatch[1].toUpperCase();
-        
-        // Everything before state is street and city
-        const beforeState = cleanAddress.substring(0, stateMatch.index).trim();
-        
-        // Try to split into street and city
-        const parts = beforeState.split(',');
-        if (parts.length >= 2) {
-          addressParts.street = parts[0].trim();
-          addressParts.city = parts[1].trim();
-        } else {
-          // Try to split by common city indicators
-          const cityPattern = /^(.+?)\s+((?:[A-Z][a-z]+\s*)+)$/;
-          const cityMatch = beforeState.match(cityPattern);
-          
-          if (cityMatch) {
-            addressParts.street = cityMatch[1].trim();
-            addressParts.city = cityMatch[2].trim();
-          } else {
-            // Fallback: assume everything is street
-            addressParts.street = beforeState;
-          }
-        }
-      }
-      
-      console.log('✅ [Azure DI OCR] Parsed using ZIP-first pattern');
-      return addressParts;
+      console.log('✅ [Azure DI OCR] Found ZIP code:', addressParts.zipCode);
     }
     
-    // Pattern 4: Try to extract from OCR text context
-    if (ocrText) {
-      console.log('🔍 [Azure DI OCR] Attempting to extract address parts from OCR context...');
-      
-      // Look for ZIP codes in the OCR text near the address
-      const ocrZipMatches = ocrText.match(/\d{5}(?:-\d{4})?/g);
-      if (ocrZipMatches) {
-        // Use the first ZIP code found
-        addressParts.zipCode = ocrZipMatches[0];
+    // Pattern 3: State abbreviation (2 uppercase letters) before ZIP
+    const statePattern = /\b([A-Z]{2})\s+\d{5}(?:-\d{4})?$/;
+    const stateMatch = cleanAddress.match(statePattern);
+    if (stateMatch) {
+      addressParts.state = stateMatch[1];
+      console.log('✅ [Azure DI OCR] Found state:', addressParts.state);
+    }
+    
+    // Pattern 4: Try to extract city (word(s) before state)
+    if (addressParts.state) {
+      const cityPattern = new RegExp(`(.+?)\\s+${addressParts.state}\\s+\\d{5}`, 'i');
+      const cityMatch = cleanAddress.match(cityPattern);
+      if (cityMatch) {
+        // Remove potential street part and get the last part as city
+        const beforeState = cityMatch[1].trim();
+        const words = beforeState.split(/\s+/);
         
-        // Look for state abbreviations near the ZIP
-        const statePattern = new RegExp(`([A-Z]{2})\\s+${addressParts.zipCode}`, 'i');
-        const stateMatch = ocrText.match(statePattern);
-        
-        if (stateMatch) {
-          addressParts.state = stateMatch[1].toUpperCase();
+        // Heuristic: if there are more than 3 words, assume the last 1-2 words are the city
+        if (words.length > 3) {
+          addressParts.city = words.slice(-2).join(' ').replace(/,$/, '');
+          addressParts.street = words.slice(0, -2).join(' ').replace(/,$/, '');
+        } else if (words.length > 1) {
+          addressParts.city = words.slice(-1).join(' ').replace(/,$/, '');
+          addressParts.street = words.slice(0, -1).join(' ').replace(/,$/, '');
         }
-      }
-      
-      // If we still don't have city, try to extract from the original address
-      if (!addressParts.city && addressParts.state) {
-        const beforeState = fullAddress.replace(new RegExp(`\\s*${addressParts.state}.*$`, 'i'), '');
-        const parts = beforeState.split(',');
         
-        if (parts.length >= 2) {
-          addressParts.street = parts[0].trim();
-          addressParts.city = parts[parts.length - 1].trim();
-        }
+        console.log('✅ [Azure DI OCR] Extracted city and street using heuristics');
       }
     }
     
-    // Fallback: if we couldn't parse properly, at least try to get the street
+    // Fallback: if we couldn't parse properly, try to extract what we can
     if (!addressParts.street && !addressParts.city) {
-      // Remove ZIP and state from the end
       let remaining = cleanAddress;
+      
+      // Remove ZIP code from the end
       if (addressParts.zipCode) {
         remaining = remaining.replace(new RegExp(`\\s*${addressParts.zipCode}$`), '');
       }
@@ -1860,152 +1801,209 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
-    // ENHANCED: Precision-anchored 1099-MISC box patterns to prevent field cross-contamination
+    // ENHANCED: More precise 1099-MISC box patterns with multi-line format support
     const amountPatterns = {
-      // Box 1 - Rents - Context-anchored patterns with word boundaries
+      // Box 1 - Rents - Enhanced patterns for multi-line format with multiple $ symbols
       rents: [
-        // Primary pattern: Box number + label + amount on same/next line
-        /\b1\s+Rents\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Alternative: "Box 1" explicit format
-        /\bBox\s*1\b[^\d]*?Rents[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Fallback: Line-anchored pattern
-        /(?:^|\n)\s*1\s+Rents\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*1\s+Rents\s*\n\s*\$+\s*\n\s*\$\s*([0-9,]+\.?\d{0,2})\b/im,
+        /\b1\s+Rents\s*(?:\n\s*\$)*\s*\n\s*\$\s*([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*1\s+Rents[\s\n]*(?:\$[\s\n]*)*\$\s*([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*1\s+Rents\s*\$\s*([0-9,]+\.?\d{0,2})/im,
+        /Box\s*1[:\s]*Rents[:\s]*\$\s*([0-9,]+\.?\d{0,2})/i,
+        /1\s*\.?\s*Rents[:\s]*\$?\s*([0-9,]+\.?\d{0,2})/i,
+        /[Rr]ents?.*?\$\s*([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*1\s*[^\n]*\$\s*([0-9,]+\.?\d{0,2})/m,
+        /1\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 2 - Royalties - Context-anchored patterns
+      
+      // Box 2 - Royalties - Enhanced patterns
       royalties: [
-        /\b2\s+Royalties\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*2\b[^\d]*?Royalties[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*2\s+Royalties\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*2\s+Royalties\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*2[:\s]*Royalties[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /2\s*\.?\s*Royalties[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Rr]oyalties?.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*2\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /2\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 3 - Other income - CRITICAL: Enhanced anchoring to capture $450,000
+      
+      // Box 3 - Other income - CRITICAL FIX: Enhanced patterns with better specificity
       otherIncome: [
-        // Primary: Box 3 + "Other income" + amount (handles multi-line)
-        /\b3\s+Other\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Alternative: Explicit "Box 3" format
-        /\bBox\s*3\b[^\d]*?Other\s+income[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Fallback: Line-start anchored
-        /(?:^|\n)\s*3\s+Other\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im,
-        // OCR variation: "3 Other income" with flexible spacing
-        /\b3\s*\.\s*Other\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i
+        /(?:^|\n)\s*3\s+Other\s+income\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*3[:\s]*Other\s+income[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /3\s*\.?\s*Other\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Oo]ther\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*3\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /3\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 4 - Federal income tax withheld - Enhanced to capture $115,000
+      
+      // Box 4 - Federal income tax withheld - Enhanced patterns for multi-line format
       federalTaxWithheld: [
-        /\b4\s+Federal\s+income\s+tax\s+withheld\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*4\b[^\d]*?Federal\s+income\s+tax\s+withheld[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*4\s+Federal\s+income\s+tax\s+withheld\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im,
-        // Shortened version that might appear in OCR
-        /\b4\s+Federal\s+tax\s+withheld\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i
+        /(?:^|\n)\s*4\s+Federal\s+income\s+tax\s+withheld\s*\n\s*\$+\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /\b4\s+Federal\s+income\s+tax\s+withheld\s*(?:\n\s*\$)*\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*4\s+Federal\s+income\s+tax\s+withheld[\s\n]*(?:\$[\s\n]*)*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*4\s+Federal\s+income\s+tax\s+withheld\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*4[:\s]*Federal\s+income\s+tax\s+withheld[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /4\s*\.?\s*Federal\s+income\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ederal.*?tax.*?withheld.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*4\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /4\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 5 - Fishing boat proceeds - Enhanced pattern
+      
+      // Box 5 - Fishing boat proceeds - CRITICAL FIX: Enhanced patterns
       fishingBoatProceeds: [
-        /\b5\s+Fishing\s+boat\s+proceeds\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*5\b[^\d]*?Fishing\s+boat\s+proceeds[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*5\s+Fishing\s+boat\s+proceeds\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*5\s+Fishing\s+boat\s+proceeds\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*5[:\s]*Fishing\s+boat\s+proceeds[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /5\s*\.?\s*Fishing\s+boat\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ishing\s+boat\s+proceeds.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*5\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /5\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 6 - Medical and health care payments - Enhanced pattern
+      
+      // Box 6 - Medical and health care payments - Enhanced patterns
       medicalHealthPayments: [
-        /\b6\s+Medical\s+and\s+health\s+care\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*6\b[^\d]*?Medical\s+and\s+health\s+care\s+payments[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*6\s+Medical\s+and\s+health\s+care\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im,
-        // Shortened OCR version
-        /\b6\s+Medical\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i
+        /(?:^|\n)\s*6\s+Medical\s+and\s+health\s+care\s+payments\s*\$([0-9,]+\.?\d{0,2})/im,
+        /Box\s*6[:\s]*Medical\s+and\s+health\s+care\s+payments[:\s]*\$([0-9,]+\.?\d{0,2})/i,
+        /6\s*\.?\s*Medical\s+and\s+health\s+care\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Mm]edical.*?health.*?care.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*6\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /6\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 7 - Nonemployee compensation - Enhanced pattern
+      
+      // Box 7 - Nonemployee compensation - Enhanced patterns
       nonemployeeCompensation: [
-        /\b7\s+Nonemployee\s+compensation\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*7\b[^\d]*?Nonemployee\s+compensation[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*7\s+Nonemployee\s+compensation\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*7\s+Nonemployee\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*7[:\s]*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /7\s*\.?\s*Nonemployee\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Nn]onemployee\s+compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*7\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /7\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 8 - Substitute payments - CRITICAL: Enhanced to capture $3,800
+      
+      // Box 8 - Substitute payments - Enhanced patterns for multi-line format
       substitutePayments: [
-        // Primary: Box 8 + "Substitute payments" + amount
-        /\b8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Alternative: Shortened version
-        /\b8\s+Substitute\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Explicit Box format
-        /\bBox\s*8\b[^\d]*?Substitute\s+payments[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Line-anchored
-        /(?:^|\n)\s*8\s+Substitute\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\n\s*\$+\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /\b8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*(?:\n\s*\$)*\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*8\s+Substitute\s+payments[\s\S]*?(?:\$[\s\n]*)*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*8\s+Substitute\s+payments\s+in\s+lieu\s+of\s+dividends\s+or\s+interest\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*8[:\s]*Substitute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /8\s*\.?\s*Substitute\s+payments.*?\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ubstitute.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*8\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /8\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 9 - Crop insurance proceeds - Enhanced pattern
+      
+      // Box 9 - Crop insurance proceeds - Enhanced patterns
       cropInsuranceProceeds: [
-        /\b9\s+Crop\s+insurance\s+proceeds\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*9\b[^\d]*?Crop\s+insurance\s+proceeds[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*9\s+Crop\s+insurance\s+proceeds\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*9\s+Crop\s+insurance\s+proceeds\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*9[:\s]*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /9\s*\.?\s*Crop\s+insurance\s+proceeds[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Cc]rop\s+insurance\s+proceeds.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*9\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /9\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 10 - Gross proceeds paid to an attorney - CRITICAL: Enhanced to capture $60,000
+      
+      // Box 10 - Gross proceeds paid to an attorney - Enhanced patterns for multi-line format
       grossProceedsAttorney: [
-        // Primary: Full description
-        /\b10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Alternative: Shortened version
-        /\b10\s+Gross\s+proceeds\s+attorney\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Even shorter OCR version
-        /\b10\s+Attorney\s+proceeds\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Explicit Box format
-        /\bBox\s*10\b[^\d]*?(?:Gross\s+proceeds|Attorney)[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Line-anchored
-        /(?:^|\n)\s*10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*10\s+Gross\s+proceeds\s+paid\s+to\s+an\s*\n\s*attorney\s*\n\s*\$+\s*\n\s*\$+\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /\b10\s+Gross\s+proceeds\s+paid\s+to\s+an[\s\n]+attorney[\s\n]*(?:\$[\s\n]*)*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*10\s+Gross\s+proceeds[\s\S]*?attorney[\s\n]*(?:\$[\s\n]*)*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*10\s+Gross\s+proceeds\s+paid\s+to\s+an\s+attorney\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*10[:\s]*Gross\s+proceeds\s+paid\s+to\s+an\s+attorney[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /10\s*\.?\s*Gross\s+proceeds.*?attorney.*?\$?([0-9,]+\.?\d{0,2})/i,
+        /[Gg]ross.*?proceeds.*?attorney.*?\$([0-9,]+\.?\d{0,2})/i,
+        /[Aa]ttorney.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*10\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 11 - Fish purchased for resale - Enhanced pattern
+      
+      // Box 11 - Fish purchased for resale - Enhanced patterns
       fishPurchases: [
-        /\b11\s+Fish\s+purchased\s+for\s+resale\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*11\b[^\d]*?Fish\s+purchased\s+for\s+resale[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*11\s+Fish\s+purchased\s+for\s+resale\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*11\s+Fish\s+purchased\s+for\s+resale\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*11[:\s]*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /11\s*\.?\s*Fish\s+purchased\s+for\s+resale[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ff]ish\s+purchased.*?resale.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*11\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /11\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 12 - Section 409A deferrals - CRITICAL: Enhanced to capture $9,500
+      
+      // Box 12 - Section 409A deferrals - Enhanced patterns for multi-line format
       section409ADeferrals: [
-        // Primary: Full description
-        /\b12\s+Section\s+409A\s+deferrals\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Alternative: Shortened version
-        /\b12\s+409A\s+deferrals\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Explicit Box format
-        /\bBox\s*12\b[^\d]*?(?:Section\s+)?409A\s+deferrals[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        // Line-anchored
-        /(?:^|\n)\s*12\s+Section\s+409A\s+deferrals\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im,
-        // OCR variation with period
-        /\b12\s*\.\s*Section\s+409A\s+deferrals\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i
+        /(?:^|\n)\s*12\s+Section\s+409A\s+deferrals\s*\n\s*\$+\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /\b12\s+Section\s+409A\s+deferrals\s*(?:\n\s*\$)*\s*\n\s*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*12\s+Section\s+409A\s+deferrals[\s\n]*(?:\$[\s\n]*)*\$([0-9,]+\.?\d{0,2})\b/im,
+        /(?:^|\n)\s*12\s+Section\s+409A\s+deferrals\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*12[:\s]*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /12\s*\.?\s*Section\s+409A\s+deferrals[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ection\s+409A\s+deferrals.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*12\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /12\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 13 - Excess golden parachute payments - Enhanced pattern
+      
+      // Box 13 - Excess golden parachute payments - Enhanced patterns
       excessGoldenParachutePayments: [
-        /\b13\s+Excess\s+golden\s+parachute\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*13\b[^\d]*?Excess\s+golden\s+parachute\s+payments[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*13\s+Excess\s+golden\s+parachute\s+payments\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*13\s+Excess\s+golden\s+parachute\s+payments\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*13[:\s]*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /13\s*\.?\s*Excess\s+golden\s+parachute\s+payments[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ee]xcess.*?golden.*?parachute.*?payments.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*13\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /13\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 14 - Nonqualified deferred compensation - Enhanced pattern
+      
+      // Box 14 - Nonqualified deferred compensation - Enhanced patterns
       nonqualifiedDeferredCompensation: [
-        /\b14\s+Nonqualified\s+deferred\s+compensation\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*14\b[^\d]*?Nonqualified\s+deferred\s+compensation[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*14\s+Nonqualified\s+deferred\s+compensation\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*14\s+Nonqualified\s+deferred\s+compensation\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*14[:\s]*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /14\s*\.?\s*Nonqualified\s+deferred\s+compensation[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Nn]onqualified.*?deferred.*?compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /[Dd]eferred.*?compensation.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*14\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 15a - Section 409A income - Enhanced pattern
+      
+      // Box 15 - Section 409A income - FIXED: Changed from "15a" to "15"
       section409AIncome: [
-        /\b15a\s+Section\s+409A\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*15a\b[^\d]*?Section\s+409A\s+income[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*15a\s+Section\s+409A\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*15\s+Section\s+409A\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*15[:\s]*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /15\s*\.?\s*Section\s+409A\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]ection\s+409A\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*15\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /15\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 16 - State tax withheld - Enhanced pattern
+      
+      // Box 16 - State tax withheld - Enhanced patterns
       stateTaxWithheld: [
-        /\b16\s+State\s+tax\s+withheld\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*16\b[^\d]*?State\s+tax\s+withheld[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*16\s+State\s+tax\s+withheld\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*16\s+State\s+tax\s+withheld\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*16[:\s]*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /16\s*\.?\s*State\s+tax\s+withheld[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]tate\s+tax\s+withheld.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*16\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /16\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ],
-      // Box 17 - State/Payer's state no. - Enhanced pattern (text field)
+      
+      // Box 17 - State/Payer's state no. - Enhanced patterns
       statePayerNumber: [
-        /\b17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$|\b18\b)/im,
-        /\bBox\s*17\b[^\d]*?State\/Payer's\s+state\s+no\.[^\d]*?([A-Z0-9\-\s]+?)(?:\n|$|\b18\b)/i,
-        /(?:^|\n)\s*17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$|\b18\b)/im
+        /(?:^|\n)\s*17\s+State\/Payer's\s+state\s+no\.\s*([A-Z0-9\-\s]+?)(?:\n|$)/im,
+        /Box\s*17[:\s]*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /17\s*\.?\s*State\/Payer's\s+state\s+no\.[:\s]*([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /[Ss]tate.*?[Pp]ayer.*?state.*?no\..*?([A-Z0-9\-\s]+?)(?:\n|$)/i,
+        /(?:^|\n)\s*17\s*[^\n]*([A-Z0-9\-\s]+?)(?:\n|$)/m
       ],
-      // Box 18 - State income - Enhanced pattern
+      
+      // Box 18 - State income - Enhanced patterns
       stateIncome: [
-        /\b18\s+State\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /\bBox\s*18\b[^\d]*?State\s+income[^\d]*?\$?\s*([0-9,]+\.?\d{0,2})\b/i,
-        /(?:^|\n)\s*18\s+State\s+income\s*[\n\s]*\$?\s*([0-9,]+\.?\d{0,2})\b/im
+        /(?:^|\n)\s*18\s+State\s+income\s*\$?([0-9,]+\.?\d{0,2})/im,
+        /Box\s*18[:\s]*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /18\s*\.?\s*State\s+income[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
+        /[Ss]tate\s+income.*?\$([0-9,]+\.?\d{0,2})/i,
+        /(?:^|\n)\s*18\s*[^\n]*\$([0-9,]+\.?\d{0,2})/m,
+        /18\s*[^\d\n]*([0-9,]+\.?\d{0,2})/m
       ]
     };
     
-    // Extract all box amounts
+    // Extract all box amounts using progressive pattern matching
     for (const [fieldName, patterns] of Object.entries(amountPatterns)) {
-      for (const pattern of patterns) {
+      let found = false;
+      
+      for (let i = 0; i < patterns.length && !found; i++) {
+        const pattern = patterns[i];
         const match = ocrText.match(pattern);
         if (match && match[1]) {
           let value: string | number = match[1];
@@ -2017,18 +2015,19 @@ export class AzureDocumentIntelligenceService {
             
             if (!isNaN(amount) && amount >= 0) {
               value = amount;
-              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount}`);
+              console.log(`✅ [Azure DI OCR] Found ${fieldName}: $${amount} (pattern ${i + 1})`);
+              found = true;
             } else {
               continue; // Skip invalid amounts
             }
           } else {
             // Handle text fields like state payer number
             value = match[1].trim();
-            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value}`);
+            console.log(`✅ [Azure DI OCR] Found ${fieldName}: ${value} (pattern ${i + 1})`);
+            found = true;
           }
           
           data[fieldName] = value;
-          break;
         }
       }
     }
@@ -2131,8 +2130,8 @@ export class AzureDocumentIntelligenceService {
     
     const data = { ...baseData };
     
-    // Extract any monetary amounts found in the text
-    const amountPattern = /\$?([0-9,]+\.?\d{0,2})/g;
+    // Extract any dollar amounts found in the text
+    const amountPattern = /\$([0-9,]+\.?\d{0,2})/g;
     const amounts = [];
     let match;
     
@@ -2146,43 +2145,24 @@ export class AzureDocumentIntelligenceService {
     }
     
     if (amounts.length > 0) {
-      data.extractedAmountsCount = amounts.length;
-      data.firstAmount = amounts[0];
-      console.log(`✅ [Azure DI OCR] Found ${amounts.length} monetary amounts`);
+      data.extractedAmounts = amounts;
+      console.log(`✅ [Azure DI OCR] Found ${amounts.length} dollar amounts:`, amounts);
     }
     
     return data;
   }
-
-  // === UTILITY METHODS ===
-  
-  private parseAmount(value: any): number {
-    if (typeof value === 'number') {
-      return value;
-    }
-    
-    if (typeof value === 'string') {
-      // Remove currency symbols and commas
-      const cleanValue = value.replace(/[$,]/g, '');
-      const parsed = parseFloat(cleanValue);
-      return isNaN(parsed) ? 0 : parsed;
-    }
-    
-    return 0;
-  }
 }
 
-// Factory function to create service instance
+// Export function for service instantiation - PLACED OUTSIDE THE CLASS
 export function getAzureDocumentIntelligenceService(): AzureDocumentIntelligenceService {
-  const endpoint = process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT;
-  const apiKey = process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY;
+  const config = {
+    endpoint: process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT!,
+    apiKey: process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY!
+  };
   
-  if (!endpoint || !apiKey) {
-    throw new Error('Azure Document Intelligence configuration missing');
+  if (!config.endpoint || !config.apiKey) {
+    throw new Error('Azure Document Intelligence configuration is missing. Please check your environment variables.');
   }
   
-  return new AzureDocumentIntelligenceService({
-    endpoint,
-    apiKey
-  });
+  return new AzureDocumentIntelligenceService(config);
 }
