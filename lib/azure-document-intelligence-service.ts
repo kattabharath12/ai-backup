@@ -1451,21 +1451,45 @@ export class AzureDocumentIntelligenceService {
     // W2-specific patterns
     console.log('🔍 [Azure DI OCR] Using W2-specific patterns...');
     
-    // === EMPLOYEE NAME PATTERNS ===
+    // === ENHANCED EMPLOYEE NAME PATTERNS ===
     const namePatterns = [
-    // W2_EMPLOYEE_NAME_PRECISE: Extract from "e Employee's first name and initial Last name [NAME]"
+    // NEW: Extract quoted names from structured OCR format
+    {
+    name: 'QUOTED_NAME_FIRST',
+    pattern: /Names:\s*"([^"]+)"/i,
+    example: 'Names: "DAVID BROWN"'
+    },
+    // NEW: Extract any quoted name (first occurrence)
+    {
+    name: 'FIRST_QUOTED_NAME',
+    pattern: /"([A-Z][A-Z\s]+[A-Z])"/,
+    example: '"DAVID BROWN"'
+    },
+    // NEW: Extract names from Employee Info section
+    {
+    name: 'EMPLOYEE_INFO_NAME',
+    pattern: /Employee\s+Info:[\s\S]*?Names:\s*"([^"]+)"/i,
+    example: 'Employee Info:\n- Names: "DAVID BROWN"'
+    },
+    // ENHANCED: Direct caps name extraction (improved to avoid false positives)
+    {
+    name: 'DIRECT_CAPS_NAME_ENHANCED',
+    pattern: /\b([A-Z]{2,}\s+[A-Z]{2,}(?:\s+[A-Z]{2,})?)\b/,
+    example: "DAVID BROWN"
+    },
+    // ORIGINAL: W2_EMPLOYEE_NAME_PRECISE: Extract from "e Employee's first name and initial Last name [NAME]"
     {
     name: 'W2_EMPLOYEE_NAME_PRECISE',
     pattern: /e\s+Employee'?s?\s+first\s+name\s+and\s+initial\s+Last\s+name\s+([A-Za-z\s]+?)(?:\s+\d|\n|f\s+Employee'?s?\s+address|$)/i,
     example: "e Employee's first name and initial Last name Michelle Hicks"
     },
-    // EMPLOYEE_NAME_MULTILINE: Extract name that appears after "Employee's name" label
+    // ORIGINAL: EMPLOYEE_NAME_MULTILINE: Extract name that appears after "Employee's name" label
     {
     name: 'EMPLOYEE_NAME_MULTILINE',
     pattern: /(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)\s*\n([A-Za-z\s]+?)(?:\n|$)/i,
     example: "Employee's name\nJordan Blake"
     },
-    // EMPLOYEE_NAME_BASIC: Basic employee name extraction
+    // ORIGINAL: EMPLOYEE_NAME_BASIC: Basic employee name extraction
     {
     name: 'EMPLOYEE_NAME_BASIC',
     pattern: /(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)[:\s]+([A-Za-z\s]+?)(?:\s+\d|\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|SSN|address|street|$)/i,
@@ -1483,7 +1507,9 @@ export class AzureDocumentIntelligenceService {
     const match = ocrText.match(patternInfo.pattern);
     if (match && match[1]) {
     const name = match[1].trim();
-    if (name.length > 2 && /^[A-Za-z\s]+$/.test(name)) {
+    // Enhanced validation: exclude common false positives
+    const excludePatterns = /^(BERNARD ST APT|DALLAS DRIVE SUITE|UNIVERSITY OF NORTH|ST APT|DRIVE SUITE)$/i;
+    if (name.length > 2 && /^[A-Za-z\s]+$/.test(name) && !excludePatterns.test(name)) {
     personalInfo.name = name;
     console.log(`✅ [Azure DI OCR] Found name using ${patternInfo.name}:`, name);
     break;
@@ -1491,8 +1517,27 @@ export class AzureDocumentIntelligenceService {
     }
     }
     
-    // === SSN PATTERNS ===
+    // === ENHANCED SSN PATTERNS ===
     const ssnPatterns = [
+    // NEW: Extract quoted SSN with XXX format
+    {
+    name: 'QUOTED_SSN_XXX',
+    pattern: /"(XXX-XX-\d{4})"/,
+    example: '"XXX-XX-1111"'
+    },
+    // NEW: Extract SSN from structured format
+    {
+    name: 'SSN_AFTER_LABEL',
+    pattern: /SSNs:\s*"([^"]+)"/i,
+    example: 'SSNs: "XXX-XX-1111"'
+    },
+    // NEW: XXX-XX-#### format specifically
+    {
+    name: 'XXX_SSN_FORMAT',
+    pattern: /\b(XXX-XX-\d{4})\b/,
+    example: "XXX-XX-1111"
+    },
+    // ORIGINAL: Traditional SSN patterns
     {
     name: 'SSN_BASIC',
     pattern: /(?:Employee'?s?\s+SSN|EMPLOYEE'?S?\s+SSN|SSN)[:\s]*(\d{3}[-\s]?\d{2}[-\s]?\d{4})/i,
@@ -1523,21 +1568,39 @@ export class AzureDocumentIntelligenceService {
     }
     }
     
-    // === ADDRESS PATTERNS ===
+    // === ENHANCED ADDRESS PATTERNS ===
     const addressPatterns = [
-    // W2_ADDRESS_SPLIT: Extract split address from W2 form (street after name, city/state/zip later)
+    // NEW: Extract quoted address from structured format
+    {
+    name: 'QUOTED_ADDRESS_FIRST',
+    pattern: /Addresses:\s*"([^"]+)"/i,
+    example: 'Addresses: "717 BERNARD ST APT 712, DENTON, TX 76201"'
+    },
+    // NEW: Extract any quoted address with proper format
+    {
+    name: 'QUOTED_ADDRESS_PATTERN',
+    pattern: /"(\d+\s+[A-Z\s]+(?:APT\s+\d+)?,\s*[A-Z\s]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)"/i,
+    example: '"717 BERNARD ST APT 712, DENTON, TX 76201"'
+    },
+    // NEW: Extract address from Employee Info section
+    {
+    name: 'EMPLOYEE_INFO_ADDRESS',
+    pattern: /Employee\s+Info:[\s\S]*?Addresses:\s*"([^"]+)"/i,
+    example: 'Employee Info:\n- Addresses: "717 BERNARD ST APT 712, DENTON, TX 76201"'
+    },
+    // ORIGINAL: W2_ADDRESS_SPLIT: Extract split address from W2 form (street after name, city/state/zip later)
     {
     name: 'W2_ADDRESS_SPLIT',
     pattern: /e\s+Employee'?s?\s+first\s+name\s+and\s+initial\s+Last\s+name\s+[A-Za-z\s]+\s+([0-9]+\s+[A-Za-z\s]+(?:Apt\.?\s*\d+)?)\s+.*?([A-Za-z\s]+\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?)/is,
     example: "e Employee's first name and initial Last name Michelle Hicks 0121 Gary Islands Apt. 691 ... Sandraport UT 35155-6840"
     },
-    // W2_ADDRESS_PRECISE: Extract from W2 form structure with specific line breaks
+    // ORIGINAL: W2_ADDRESS_PRECISE: Extract from W2 form structure with specific line breaks
     {
     name: 'W2_ADDRESS_PRECISE',
     pattern: /([0-9]+\s+[A-Za-z\s]+(?:Apt\.?\s*\d+)?)\s+([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/i,
     example: "0121 Gary Islands Apt. 691 Sandraport UT 35155-6840"
     },
-    // W2_ADDRESS_MULTILINE: Extract address that spans multiple lines after employee name
+    // ORIGINAL: W2_ADDRESS_MULTILINE: Extract address that spans multiple lines after employee name
     {
     name: 'W2_ADDRESS_MULTILINE',
     pattern: /(?:Employee'?s?\s+first\s+name.*?)\n([0-9]+\s+[A-Za-z\s]+(?:Apt\.?\s*\d+)?)\s*\n?([A-Za-z\s]+\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?)/i,
@@ -1589,8 +1652,27 @@ export class AzureDocumentIntelligenceService {
     }
     }
     
-    // === EMPLOYER NAME PATTERNS ===
+    // === ENHANCED EMPLOYER NAME PATTERNS ===
     const employerNamePatterns = [
+    // NEW: Extract quoted employer name from structured format
+    {
+    name: 'QUOTED_EMPLOYER_NAME',
+    pattern: /Employer\s+Info:[\s\S]*?Name:\s*"([^"]+)"/i,
+    example: 'Employer Info:\n- Name: "UNIVERSITY OF NORTH TEXAS"'
+    },
+    // NEW: Extract employer name after "Name:" label
+    {
+    name: 'EMPLOYER_NAME_AFTER_LABEL',
+    pattern: /(?:Employer[\s\S]*?)?Name:\s*"([A-Z\s&.,'-]+)"/i,
+    example: 'Name: "UNIVERSITY OF NORTH TEXAS"'
+    },
+    // NEW: Extract university names specifically
+    {
+    name: 'UNIVERSITY_NAME_PATTERN',
+    pattern: /"(UNIVERSITY\s+OF\s+[A-Z\s]+)"/i,
+    example: '"UNIVERSITY OF NORTH TEXAS"'
+    },
+    // ORIGINAL: Traditional employer name patterns
     {
     name: 'EMPLOYER_NAME_BASIC',
     pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)[:\s]+([A-Za-z\s&.,'-]+?)(?:\s+\d|\n|Employer'?s?\s+|EMPLOYER'?S?\s+|EIN|address|street|$)/i,
@@ -1616,8 +1698,27 @@ export class AzureDocumentIntelligenceService {
     }
     }
     
-    // === EMPLOYER ADDRESS PATTERNS ===
+    // === ENHANCED EMPLOYER ADDRESS PATTERNS ===
     const employerAddressPatterns = [
+    // NEW: Extract quoted employer address from structured format
+    {
+    name: 'QUOTED_EMPLOYER_ADDRESS',
+    pattern: /Employer\s+Info:[\s\S]*?Address:\s*"([^"]+)"/i,
+    example: 'Employer Info:\n- Address: "1000 DALLAS DRIVE SUITE 4200, DENTON, TX 76205"'
+    },
+    // NEW: Extract employer address after "Address:" label
+    {
+    name: 'EMPLOYER_ADDRESS_AFTER_LABEL',
+    pattern: /(?:Employer[\s\S]*?)?Address:\s*"([^"]+)"/i,
+    example: 'Address: "1000 DALLAS DRIVE SUITE 4200, DENTON, TX 76205"'
+    },
+    // NEW: Extract address with SUITE pattern
+    {
+    name: 'SUITE_ADDRESS_PATTERN',
+    pattern: /"(\d+\s+[A-Z\s]+SUITE\s+\d+,\s*[A-Z\s]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)"/i,
+    example: '"1000 DALLAS DRIVE SUITE 4200, DENTON, TX 76205"'
+    },
+    // ORIGINAL: Traditional employer address patterns
     {
     name: 'EMPLOYER_ADDRESS_MULTILINE',
     pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|$)/i,
@@ -1638,6 +1739,38 @@ export class AzureDocumentIntelligenceService {
     if (address.length > 5) {
     personalInfo.employerAddress = address;
     console.log(`✅ [Azure DI OCR] Found employer address using ${patternInfo.name}:`, address);
+    break;
+    }
+    }
+    }
+    
+    // === NEW: EMPLOYER EIN EXTRACTION ===
+    const einPatterns = [
+    {
+    name: 'QUOTED_EIN',
+    pattern: /EIN:\s*"(\d{2}-\d{7})"/i,
+    example: 'EIN: "75-6002149"'
+    },
+    {
+    name: 'EIN_BASIC',
+    pattern: /(?:EIN|Employer\s+identification\s+number)[:\s]*(\d{2}-\d{7})/i,
+    example: "EIN: 75-6002149"
+    },
+    {
+    name: 'EIN_STANDALONE',
+    pattern: /\b(\d{2}-\d{7})\b/,
+    example: "75-6002149"
+    }
+    ];
+    
+    // Try EIN patterns and store in employerTIN field (since EIN is employer's TIN)
+    for (const patternInfo of einPatterns) {
+    const match = ocrText.match(patternInfo.pattern);
+    if (match && match[1]) {
+    const ein = match[1].trim();
+    if (ein.length === 10) { // EIN format: ##-#######
+    personalInfo.payerTIN = ein; // Store as payerTIN for compatibility
+    console.log(`✅ [Azure DI OCR] Found EIN using ${patternInfo.name}:`, ein);
     break;
     }
     }
