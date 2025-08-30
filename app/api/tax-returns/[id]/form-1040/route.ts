@@ -67,6 +67,9 @@ export async function GET(
     // Check if there's existing 1040 data
     let form1040Data: Partial<Form1040Data> = {};
     
+    // If there's saved 1040 data in a separate table or JSON field, load it
+    // For now, we'll construct it from the tax return data
+    
     // Get W2 and 1099 documents and their extracted data
     const w2Documents = taxReturn.documents.filter((doc: any) => doc.documentType === 'W2');
     const form1099Documents = taxReturn.documents.filter((doc: any) => 
@@ -228,53 +231,78 @@ export async function GET(
       }
     }
 
-    // 🚨 CRITICAL FIX: Process accepted income entries from the database
-    // Since there's no documentId field, we'll use a different approach to prevent duplicates
-    console.log(`🔍 [1040 GET] Processing ${taxReturn.incomeEntries.length} income entries from database`);
-
-    // Track if we've already processed documents to avoid double-counting
+    // CRITICAL FIX: Process accepted income entries from the database
+    // This handles 1099 data that was accepted by the user but may not be in document extractedData
+    // IMPORTANT: Only process income entries that are NOT already included in W2/1099 document mapping
+    console.log(`🔍 [1040 GET] Processing ${taxReturn.incomeEntries.length} accepted income entries`);
+    
+    // Track which documents have already been processed to avoid double-counting
+    const processedDocumentIds = new Set([
+      ...w2Documents.map(doc => doc.id),
+      ...form1099Documents.map(doc => doc.id)
+    ]);
+    
+    // Determine if we have processed W2 and 1099 documents to avoid double-counting
     const hasProcessedW2Documents = w2Documents.length > 0;
     const hasProcessed1099Documents = form1099Documents.length > 0;
-
-    console.log(`🔍 [1040 GET] hasProcessedW2Documents: ${hasProcessedW2Documents}, hasProcessed1099Documents: ${hasProcessed1099Documents}`);
+    
+    console.log(`🔍 [1040 GET] Document processing flags - W2: ${hasProcessedW2Documents}, 1099: ${hasProcessed1099Documents}`);
     
     for (const incomeEntry of taxReturn.incomeEntries) {
       console.log(`🔍 [1040 GET] Processing income entry: ${incomeEntry.incomeType} - $${incomeEntry.amount}`);
       
+      // Skip income entries that come from documents we've already processed
+      if (incomeEntry.documentId && processedDocumentIds.has(incomeEntry.documentId)) {
+        console.log(`⚠️ [1040 GET] Skipping income entry from already processed document: ${incomeEntry.documentId}`);
+        continue;
+      }
+      
+      // DOUBLE-COUNTING FIX: Skip W2_WAGES entries if W2 documents have been processed
+      if (incomeEntry.incomeType === 'W2_WAGES' && hasProcessedW2Documents) {
+        console.log(`ℹ️ [1040 GET] Skipping W2_WAGES database entry because W2 documents have been processed`);
+        continue;
+      }
+      
+      // DOUBLE-COUNTING FIX: Skip OTHER_INCOME entries if 1099 documents have been processed
+      if (incomeEntry.incomeType === 'OTHER_INCOME' && hasProcessed1099Documents) {
+        console.log(`ℹ️ [1040 GET] Skipping OTHER_INCOME database entry because 1099 documents have been processed`);
+        continue;
+      }
+      
+      // DOUBLE-COUNTING FIX: Skip INTEREST entries if 1099 documents have been processed
+      if (incomeEntry.incomeType === 'INTEREST' && hasProcessed1099Documents) {
+        console.log(`ℹ️ [1040 GET] Skipping INTEREST database entry because 1099 documents have been processed`);
+        continue;
+      }
+      
+      // DOUBLE-COUNTING FIX: Skip DIVIDENDS entries if 1099 documents have been processed
+      if (incomeEntry.incomeType === 'DIVIDENDS' && hasProcessed1099Documents) {
+        console.log(`ℹ️ [1040 GET] Skipping DIVIDENDS database entry because 1099 documents have been processed`);
+        continue;
+      }
+      
+      // Only process income entries that are manually entered or from unprocessed documents
       // Map income entries to 1040 form lines based on income type
       switch (incomeEntry.incomeType) {
         case 'W2_WAGES':
-          // 🚨 CRITICAL FIX: Only add W2 income entries if we haven't processed W2 documents
-          // This prevents double-counting when W2 documents have already been processed
-          if (!hasProcessedW2Documents) {
+          // Only add if this is a manual entry or from an unprocessed document
+          if (!incomeEntry.documentId) {
             form1040Data.line1 = (form1040Data.line1 || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
             form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
-            console.log(`✅ [1040 GET] Added W2 wages to Line 1: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
-          } else {
-            console.log(`⚠️ [1040 GET] Skipping W2 income entry - already processed from W2 documents`);
+            console.log(`✅ [1040 GET] Added manual W2 wages to Line 1: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           }
           break;
           
         case 'INTEREST':
-          // Only add if we haven't processed 1099-INT documents
-          if (!hasProcessed1099Documents) {
-            form1040Data.line2b = (form1040Data.line2b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
-            form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
-            console.log(`✅ [1040 GET] Added interest income to Line 2b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
-          } else {
-            console.log(`⚠️ [1040 GET] Skipping interest income entry - already processed from 1099 documents`);
-          }
+          form1040Data.line2b = (form1040Data.line2b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
+          console.log(`✅ [1040 GET] Added interest income to Line 2b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'DIVIDENDS':
-          // Only add if we haven't processed 1099-DIV documents
-          if (!hasProcessed1099Documents) {
-            form1040Data.line3b = (form1040Data.line3b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
-            form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
-            console.log(`✅ [1040 GET] Added dividend income to Line 3b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
-          } else {
-            console.log(`⚠️ [1040 GET] Skipping dividend income entry - already processed from 1099 documents`);
-          }
+          form1040Data.line3b = (form1040Data.line3b || 0) + (incomeEntry.amount ? incomeEntry.amount.toNumber() : 0);
+          form1040Data.line25a = (form1040Data.line25a || 0) + (incomeEntry.federalTaxWithheld ? incomeEntry.federalTaxWithheld.toNumber() : 0);
+          console.log(`✅ [1040 GET] Added dividend income to Line 3b: $${incomeEntry.amount}, withholding to Line 25a: $${incomeEntry.federalTaxWithheld || 0}`);
           break;
           
         case 'OTHER_INCOME':
