@@ -1,5 +1,4 @@
 
-
 import { DocumentAnalysisClient, AzureKeyCredential } from "@azure/ai-form-recognizer";
 import { DocumentType } from "@prisma/client";
 import { readFile } from "fs/promises";
