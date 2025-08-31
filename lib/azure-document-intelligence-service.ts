@@ -290,7 +290,10 @@ export class AzureDocumentIntelligenceService {
     // OCR fallback for personal info if not found in structured fields
     if ((!w2Data.employeeName || !w2Data.employeeSSN || !w2Data.employeeAddress || !w2Data.employerName || !w2Data.employerAddress) && baseData.fullText) {
       console.log('🔍 [Azure DI] Some personal info missing from structured fields, attempting OCR extraction...');
-      const personalInfoFromOCR = this.extractPersonalInfoFromOCR(baseData.fullText as string);
+      
+      // Pass the already extracted employee name as a target for multi-employee scenarios
+      const targetEmployeeName = w2Data.employeeName as string | undefined;
+      const personalInfoFromOCR = this.extractPersonalInfoFromOCR(baseData.fullText as string, targetEmployeeName);
       
       if (!w2Data.employeeName && personalInfoFromOCR.name) {
         w2Data.employeeName = personalInfoFromOCR.name;
@@ -1180,8 +1183,10 @@ export class AzureDocumentIntelligenceService {
    * ENHANCED: Extracts personal information from W2 OCR text using comprehensive regex patterns
    * Specifically designed for W2 form OCR text patterns with enhanced fallback mechanisms
    * NOW INCLUDES: Multi-employee record handling for documents with multiple W2s
+   * @param ocrText - The OCR text to extract information from
+   * @param targetEmployeeName - Optional target employee name to match against in multi-employee scenarios
    */
-  private extractPersonalInfoFromOCR(ocrText: string): {
+  private extractPersonalInfoFromOCR(ocrText: string, targetEmployeeName?: string): {
     name?: string;
     ssn?: string;
     tin?: string;
@@ -1233,7 +1238,7 @@ export class AzureDocumentIntelligenceService {
       console.log(`🔍 [Azure DI OCR] Detected ${multiEmployeeInfo.employeeRecords.length} employee records in W2 OCR`);
       
       // Use the primary employee record (first one or most complete one)
-      const primaryEmployee = this.selectPrimaryEmployeeRecord(multiEmployeeInfo.employeeRecords);
+      const primaryEmployee = this.selectPrimaryEmployeeRecord(multiEmployeeInfo.employeeRecords, targetEmployeeName);
       if (primaryEmployee) {
         console.log('✅ [Azure DI OCR] Selected primary employee record:', primaryEmployee.name);
         
@@ -1252,6 +1257,21 @@ export class AzureDocumentIntelligenceService {
         
         return personalInfo;
       }
+    } else if (multiEmployeeInfo.employeeRecords.length === 1) {
+      // Single employee record found using enhanced detection
+      const singleEmployee = multiEmployeeInfo.employeeRecords[0];
+      console.log('✅ [Azure DI OCR] Using single employee record from enhanced detection:', singleEmployee.name);
+      
+      personalInfo.name = singleEmployee.name;
+      personalInfo.ssn = singleEmployee.ssn;
+      personalInfo.address = singleEmployee.address;
+      
+      // Continue with employer extraction using standard patterns
+      const employerInfo = this.extractEmployerInfoFromOCR(ocrText);
+      if (employerInfo.employerName) personalInfo.employerName = employerInfo.employerName;
+      if (employerInfo.employerAddress) personalInfo.employerAddress = employerInfo.employerAddress;
+      
+      return personalInfo;
     }
     
     // Standard single-employee extraction patterns
@@ -1453,8 +1473,9 @@ export class AzureDocumentIntelligenceService {
   }
 
   /**
-   * NEW: Detects and extracts multiple employee records from W2 OCR text
+   * ENHANCED: Detects and extracts multiple employee records from W2 OCR text
    * Handles cases where OCR contains multiple W2 forms or employee information
+   * Now supports the specific format: "e/f Employee's name, address, and ZIP code"
    */
   private detectAndExtractMultipleEmployeeRecords(ocrText: string): {
     hasMultipleEmployees: boolean;
@@ -1479,121 +1500,210 @@ export class AzureDocumentIntelligenceService {
       }>
     };
     
-    // Look for multiple name patterns that might indicate multiple employees
-    const multipleNameIndicators = [
-      // Multiple "Employee's name" sections
-      /Employee'?s?\s+(?:first\s+)?name[^\n]*\n([A-Za-z\s]+)/gi,
-      // Multiple name patterns in sequence
-      /([A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+)(?:\s+[A-Z][A-Za-z]+)?/g,
-      // Names followed by SSN patterns
-      /([A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+)[\s\n]*(?:SSN|Social Security)[\s\n]*(\d{3}[-\s]?\d{2}[-\s]?\d{4})/gi
-    ];
+    // ENHANCED: Split OCR text into lines for better parsing
+    const lines = ocrText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
     
-    const potentialNames = new Set<string>();
-    const nameToSSNMap = new Map<string, string>();
-    const nameToAddressMap = new Map<string, string>();
+    // Look for employee blocks in the specific W2 format
+    const employeeBlocks: Array<{
+      name: string;
+      address: string;
+      startIndex: number;
+      endIndex: number;
+      sourceText: string;
+    }> = [];
     
-    // Extract all potential employee names
-    for (const pattern of multipleNameIndicators) {
-      let match;
-      pattern.lastIndex = 0; // Reset regex
+    // Pattern 1: Look for "e/f Employee's name, address, and ZIP code" format
+    const w2HeaderPattern = /e\/f\s+Employee'?s?\s+name,?\s+address,?\s+and\s+ZIP\s+code/i;
+    
+    if (w2HeaderPattern.test(ocrText)) {
+      console.log('✅ [Azure DI OCR] Detected W2 format with "e/f Employee\'s name, address, and ZIP code"');
       
-      while ((match = pattern.exec(ocrText)) !== null) {
-        if (match[1]) {
-          const name = match[1].trim();
+      // Find all employee blocks after the header
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Look for lines that match the header pattern
+        if (w2HeaderPattern.test(line)) {
+          console.log(`🔍 [Azure DI OCR] Found W2 header at line ${i}: "${line}"`);
           
-          // Validate name (should be 2+ words, proper case, reasonable length)
-          if (name.length > 3 && name.length < 50 && 
-              /^[A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+/.test(name) &&
-              !name.toLowerCase().includes('employee') &&
-              !name.toLowerCase().includes('employer') &&
-              !name.toLowerCase().includes('form')) {
+          // Extract employee records that follow this header
+          let currentIndex = i + 1;
+          
+          while (currentIndex < lines.length) {
+            const currentLine = lines[currentIndex];
             
-            potentialNames.add(name);
+            // Check if this line looks like an employee name (all caps, 2+ words)
+            if (/^[A-Z][A-Z\s]+[A-Z]$/.test(currentLine) && 
+                currentLine.split(' ').length >= 2 &&
+                currentLine.length > 3 && currentLine.length < 50 &&
+                !currentLine.includes('EMPLOYEE') &&
+                !currentLine.includes('EMPLOYER') &&
+                !currentLine.includes('FORM')) {
+              
+              console.log(`🔍 [Azure DI OCR] Found potential employee name at line ${currentIndex}: "${currentLine}"`);
+              
+              // Try to extract the address that follows this name
+              const addressLines: string[] = [];
+              let addressIndex = currentIndex + 1;
+              
+              // Look for street address (should contain numbers)
+              if (addressIndex < lines.length && /\d/.test(lines[addressIndex])) {
+                addressLines.push(lines[addressIndex]);
+                addressIndex++;
+                
+                // Look for city, state, zip (should match pattern like "CITY, ST 12345")
+                if (addressIndex < lines.length && 
+                    /^[A-Z\s]+,\s*[A-Z]{2}\s+\d{5}(-\d{4})?$/.test(lines[addressIndex])) {
+                  addressLines.push(lines[addressIndex]);
+                  
+                  // We found a complete employee record
+                  const fullAddress = addressLines.join(' ');
+                  const sourceText = lines.slice(currentIndex, addressIndex + 1).join('\n');
+                  
+                  employeeBlocks.push({
+                    name: currentLine,
+                    address: fullAddress,
+                    startIndex: currentIndex,
+                    endIndex: addressIndex,
+                    sourceText: sourceText
+                  });
+                  
+                  console.log(`✅ [Azure DI OCR] Extracted employee block: ${currentLine} -> ${fullAddress}`);
+                  
+                  // Move to the next potential employee (skip past this address)
+                  currentIndex = addressIndex + 1;
+                } else {
+                  // No valid city/state/zip found, move to next line
+                  currentIndex++;
+                }
+              } else {
+                // No valid street address found, move to next line
+                currentIndex++;
+              }
+            } else {
+              // Not an employee name, move to next line
+              currentIndex++;
+            }
+          }
+          
+          break; // We processed the first header we found
+        }
+      }
+    }
+    
+    // Pattern 2: Fallback to original detection for other formats
+    if (employeeBlocks.length === 0) {
+      console.log('🔍 [Azure DI OCR] W2 header format not found, trying fallback patterns...');
+      
+      const multipleNameIndicators = [
+        // Multiple "Employee's name" sections
+        /Employee'?s?\s+(?:first\s+)?name[^\n]*\n([A-Za-z\s]+)/gi,
+        // Names followed by addresses
+        /([A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+)[\s\n]+([0-9]+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Boulevard|Blvd)[^\n]*[\s\n]+[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5})/gi
+      ];
+      
+      const potentialNames = new Set<string>();
+      const nameToAddressMap = new Map<string, string>();
+      
+      for (const pattern of multipleNameIndicators) {
+        let match;
+        pattern.lastIndex = 0;
+        
+        while ((match = pattern.exec(ocrText)) !== null) {
+          if (match[1]) {
+            const name = match[1].trim();
             
-            // If we have an SSN in the match, associate it
-            if (match[2]) {
-              nameToSSNMap.set(name, match[2]);
+            if (name.length > 3 && name.length < 50 && 
+                /^[A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+/.test(name) &&
+                !name.toLowerCase().includes('employee') &&
+                !name.toLowerCase().includes('employer') &&
+                !name.toLowerCase().includes('form')) {
+              
+              potentialNames.add(name);
+              
+              // If we have an address in the match, associate it
+              if (match[2]) {
+                nameToAddressMap.set(name, match[2].trim());
+              }
             }
           }
         }
       }
+      
+      // Convert to employee blocks format
+      for (const name of potentialNames) {
+        const address = nameToAddressMap.get(name);
+        if (address) {
+          employeeBlocks.push({
+            name,
+            address,
+            startIndex: 0,
+            endIndex: 0,
+            sourceText: `${name}\n${address}`
+          });
+        }
+      }
     }
     
-    console.log(`🔍 [Azure DI OCR] Found ${potentialNames.size} potential employee names:`, Array.from(potentialNames));
+    console.log(`🔍 [Azure DI OCR] Found ${employeeBlocks.length} employee blocks`);
     
-    // If we found multiple potential names, try to extract their details
-    if (potentialNames.size > 1) {
+    // Convert employee blocks to the expected format
+    if (employeeBlocks.length > 1) {
       result.hasMultipleEmployees = true;
+    }
+    
+    for (const block of employeeBlocks) {
+      const employeeRecord = {
+        name: block.name,
+        ssn: undefined as string | undefined,
+        address: block.address,
+        confidence: 0,
+        sourceText: block.sourceText
+      };
       
-      for (const name of potentialNames) {
-        const employeeRecord = {
-          name,
-          ssn: nameToSSNMap.get(name),
-          address: undefined as string | undefined,
-          confidence: 0,
-          sourceText: ''
-        };
-        
-        // Try to find address associated with this name
-        const addressPattern = new RegExp(
-          `${name.replace(/\s+/g, '\\s+')}[\s\S]{0,200}?([0-9]+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Boulevard|Blvd)[\s\S]{0,100}?[A-Z]{2}\s+\d{5}(?:-\d{4})?)`,
-          'i'
-        );
-        
-        const addressMatch = ocrText.match(addressPattern);
-        if (addressMatch && addressMatch[1]) {
-          employeeRecord.address = addressMatch[1].trim();
-          nameToAddressMap.set(name, employeeRecord.address);
-        }
-        
-        // Calculate confidence score based on available information
-        let confidence = 30; // Base confidence for having a valid name
-        if (employeeRecord.ssn) confidence += 40; // SSN adds significant confidence
-        if (employeeRecord.address) confidence += 30; // Address adds confidence
-        
-        // Boost confidence if name appears near W2-specific keywords
-        const contextPattern = new RegExp(
-          `(?:Employee'?s?\s+name|wage|tax|statement|form\s+w-?2)[\s\S]{0,100}?${name.replace(/\s+/g, '\\s+')}`,
-          'i'
-        );
-        if (contextPattern.test(ocrText)) {
-          confidence += 20;
-        }
-        
-        employeeRecord.confidence = Math.min(confidence, 100);
-        
-        // Extract source text context (±100 characters around the name)
-        const nameIndex = ocrText.indexOf(name);
-        if (nameIndex !== -1) {
-          const start = Math.max(0, nameIndex - 100);
-          const end = Math.min(ocrText.length, nameIndex + name.length + 100);
-          employeeRecord.sourceText = ocrText.substring(start, end);
-        }
-        
-        result.employeeRecords.push(employeeRecord);
-        
-        console.log(`✅ [Azure DI OCR] Employee record: ${name} (confidence: ${confidence}%)`);
+      // Try to find SSN near this employee's information
+      const ssnPattern = new RegExp(
+        `${block.name.replace(/\s+/g, '\\s+')}[\\s\\S]{0,200}?(\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4})`,
+        'i'
+      );
+      const ssnMatch = ocrText.match(ssnPattern);
+      if (ssnMatch && ssnMatch[1]) {
+        employeeRecord.ssn = ssnMatch[1];
       }
       
-      // Sort by confidence (highest first)
-      result.employeeRecords.sort((a, b) => b.confidence - a.confidence);
+      // Calculate confidence score
+      let confidence = 50; // Base confidence for structured extraction
+      if (employeeRecord.ssn) confidence += 30;
+      if (employeeRecord.address && employeeRecord.address.length > 10) confidence += 20;
+      
+      employeeRecord.confidence = Math.min(confidence, 100);
+      
+      result.employeeRecords.push(employeeRecord);
+      
+      console.log(`✅ [Azure DI OCR] Employee record: ${block.name} (confidence: ${confidence}%)`);
     }
+    
+    // Sort by confidence (highest first)
+    result.employeeRecords.sort((a, b) => b.confidence - a.confidence);
     
     return result;
   }
 
   /**
-   * NEW: Selects the primary employee record from multiple detected records
+   * ENHANCED: Selects the primary employee record from multiple detected records
    * Uses confidence scoring and completeness to determine the best match
+   * Can also match against a specific target employee name
    */
-  private selectPrimaryEmployeeRecord(employeeRecords: Array<{
-    name?: string;
-    ssn?: string;
-    address?: string;
-    confidence: number;
-    sourceText: string;
-  }>): {
+  private selectPrimaryEmployeeRecord(
+    employeeRecords: Array<{
+      name?: string;
+      ssn?: string;
+      address?: string;
+      confidence: number;
+      sourceText: string;
+    }>,
+    targetEmployeeName?: string
+  ): {
     name?: string;
     ssn?: string;
     address?: string;
@@ -1611,6 +1721,37 @@ export class AzureDocumentIntelligenceService {
     }
     
     console.log('🔍 [Azure DI OCR] Selecting primary employee from multiple records...');
+    if (targetEmployeeName) {
+      console.log(`🎯 [Azure DI OCR] Target employee name: "${targetEmployeeName}"`);
+    }
+    
+    // If we have a target employee name, try to find an exact or close match first
+    if (targetEmployeeName) {
+      const normalizedTarget = this.normalizeNameForMatching(targetEmployeeName);
+      
+      for (const record of employeeRecords) {
+        if (record.name) {
+          const normalizedRecordName = this.normalizeNameForMatching(record.name);
+          
+          // Check for exact match
+          if (normalizedRecordName === normalizedTarget) {
+            console.log(`✅ [Azure DI OCR] Found exact match for target employee: ${record.name}`);
+            return record;
+          }
+          
+          // Check for partial match (all words in target appear in record)
+          const targetWords = normalizedTarget.split(' ');
+          const recordWords = normalizedRecordName.split(' ');
+          
+          if (targetWords.every(word => recordWords.includes(word))) {
+            console.log(`✅ [Azure DI OCR] Found partial match for target employee: ${record.name}`);
+            return record;
+          }
+        }
+      }
+      
+      console.log(`⚠️ [Azure DI OCR] No exact match found for target employee "${targetEmployeeName}", using scoring method`);
+    }
     
     // Score each record based on completeness and confidence
     const scoredRecords = employeeRecords.map(record => {
@@ -1631,6 +1772,12 @@ export class AzureDocumentIntelligenceService {
         score += 5;
       }
       
+      // If we have a target name, boost score for similarity
+      if (targetEmployeeName && record.name) {
+        const similarity = this.calculateNameSimilarity(targetEmployeeName, record.name);
+        score += similarity * 30; // Up to 30 bonus points for similarity
+      }
+      
       return { ...record, finalScore: score };
     });
     
@@ -1647,6 +1794,38 @@ export class AzureDocumentIntelligenceService {
     });
     
     return selected;
+  }
+
+  /**
+   * NEW: Normalizes a name for matching by removing extra spaces, converting to uppercase
+   */
+  private normalizeNameForMatching(name: string): string {
+    return name.trim().toUpperCase().replace(/\s+/g, ' ');
+  }
+
+  /**
+   * NEW: Calculates similarity between two names (0-1 scale)
+   */
+  private calculateNameSimilarity(name1: string, name2: string): number {
+    const normalized1 = this.normalizeNameForMatching(name1);
+    const normalized2 = this.normalizeNameForMatching(name2);
+    
+    if (normalized1 === normalized2) return 1.0;
+    
+    const words1 = normalized1.split(' ');
+    const words2 = normalized2.split(' ');
+    
+    // Count matching words
+    let matchingWords = 0;
+    for (const word1 of words1) {
+      if (words2.includes(word1)) {
+        matchingWords++;
+      }
+    }
+    
+    // Return ratio of matching words to total unique words
+    const totalWords = Math.max(words1.length, words2.length);
+    return matchingWords / totalWords;
   }
 
   /**
