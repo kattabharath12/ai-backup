@@ -24,10 +24,17 @@ export class W2ToForm1040Mapper {
 
     console.log('🔍 [W2 MAPPER] Using actualW2Data:', JSON.stringify(actualW2Data, null, 2));
 
-    // Personal Information Mapping - Enhanced to prioritize W2 data
+    // Personal Information Mapping - Enhanced with validation
     console.log('🔍 [W2 MAPPER] Starting personal information mapping...');
     
-    const employeeName = actualW2Data.employeeName || actualW2Data.Employee?.Name || actualW2Data['Employee.Name'];
+    let employeeName = actualW2Data.employeeName || actualW2Data.Employee?.Name || actualW2Data['Employee.Name'];
+
+    // VALIDATE the extracted name - if it looks suspicious, ignore it
+    if (employeeName && this.isSuspiciousEmployeeName(employeeName)) {
+      console.log('⚠️ [W2 MAPPER] Suspicious employee name detected:', employeeName, '- ignoring and using OCR fallback');
+      employeeName = null; // Force OCR fallback
+    }
+
     if (employeeName) {
       console.log('🔍 [W2 MAPPER] Mapping employee name from W2:', employeeName);
       const nameParts = employeeName.trim().split(/\s+/);
@@ -77,9 +84,9 @@ export class W2ToForm1040Mapper {
       });
     }
 
-    // Ultra-targeted OCR fallback for missing employee information
+    // OCR fallback for missing OR suspicious employee information
     if ((!employeeName || !employeeAddress) && actualW2Data.fullText) {
-      console.log('🔍 [W2 MAPPER] Employee info missing, attempting ultra-targeted OCR extraction...');
+      console.log('🔍 [W2 MAPPER] Employee info missing/suspicious, attempting OCR extraction...');
       const employeeInfo = this.extractEmployeeInfoFromOCR(actualW2Data.fullText);
       
       if (!employeeName && employeeInfo.name) {
@@ -217,6 +224,28 @@ export class W2ToForm1040Mapper {
       console.log('🔍 [W2 MAPPER] Final form1040Data:', JSON.stringify(form1040Data, null, 2));
     }
     return form1040Data;
+  }
+
+  /**
+   * Detects suspicious employee names that are likely document headers
+   */
+  private static isSuspiciousEmployeeName(name: string): boolean {
+    if (!name) return false;
+    
+    const suspiciousTerms = [
+      'REISSUED STATEMENT', 'EARNINGS SUMMARY', 'TRIAL', 'EVALUATION',
+      'COPY', 'FEDERAL', 'STATE', 'FORM', 'WAGE', 'TAX', 'STATEMENT',
+      'DEPARTMENT', 'TREASURY', 'SERVICE', 'SAFE', 'ACCURATE', 'FAST',
+      'PURPOSES ONLY', 'REMOVE WITH', 'KEY', 'VISIT', 'WEBSITE',
+      'CONTROL NUMBER', 'OMB NO', 'INTERNAL REVENUE', 'W-2',
+      'SUBSTITUTE', 'ACCEPTABLE', 'FILING', 'RETURN', 'INFORMATION',
+      'FURNISHED', 'NEGLIGENCE', 'PENALTY', 'SANCTION', 'IMPOSED',
+      'INCOME TAXABLE', 'FAIL TO REPORT', 'CUT HERE', 'KEEP LOWER',
+      'PORTION', 'RECORDS', 'EMPLOYEE RECORDS', 'COPY B', 'COPY C'
+    ];
+    
+    const upperName = name.toUpperCase();
+    return suspiciousTerms.some(term => upperName.includes(term));
   }
 
   /**
@@ -421,7 +450,7 @@ export class W2ToForm1040Mapper {
       mappings.push({
         w2Field: 'Box 3 - Social Security Wages',
         w2Value: w2Data.socialSecurityWages,
-        form1040Line: 'Informational',
+        form1040Line: 'Line 25a',
         form1040Value: this.parseAmount(w2Data.socialSecurityWages),
         description: 'Social security wages (informational)'
       });
