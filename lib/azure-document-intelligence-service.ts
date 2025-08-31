@@ -1537,7 +1537,7 @@ export class AzureDocumentIntelligenceService {
         
         // Try to find address associated with this name
         const addressPattern = new RegExp(
-          `${name.replace(/\s+/g, '\\s+')}[\\s\\S]{0,200}?([0-9]+\\s+[A-Za-z\\s]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Boulevard|Blvd)[\\s\\S]{0,100}?[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?)`,
+          `${name.replace(/\s+/g, '\\s+')}[\s\S]{0,200}?([0-9]+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Boulevard|Blvd)[\s\S]{0,100}?[A-Z]{2}\s+\d{5}(?:-\d{4})?)`,
           'i'
         );
         
@@ -1554,7 +1554,7 @@ export class AzureDocumentIntelligenceService {
         
         // Boost confidence if name appears near W2-specific keywords
         const contextPattern = new RegExp(
-          `(?:Employee'?s?\\s+name|wage|tax|statement|form\\s+w-?2)[\\s\\S]{0,100}?${name.replace(/\s+/g, '\\s+')}`,
+          `(?:Employee'?s?\s+name|wage|tax|statement|form\s+w-?2)[\s\S]{0,100}?${name.replace(/\s+/g, '\\s+')}`,
           'i'
         );
         if (contextPattern.test(ocrText)) {
@@ -1966,7 +1966,7 @@ export class AzureDocumentIntelligenceService {
     
     // Look for wage patterns within 500 characters of the employee name
     const contextPattern = new RegExp(
-      `${employeeNamePattern}[\\s\\S]{0,500}?(?:1\\s+Wages[\\s\\S]*?\\$?([0-9,]+\\.?\\d{0,2})|Box\\s*1[\\s\\S]*?\\$?([0-9,]+\\.?\\d{0,2}))`,
+      `${employeeNamePattern}[\s\S]{0,500}?(?:1\s+Wages[\s\S]*?\\$?([0-9,]+\.?\d{0,2})|Box\s*1[\s\S]*?\\$?([0-9,]+\.?\d{0,2}))`,
       'i'
     );
     
@@ -2002,7 +2002,7 @@ export class AzureDocumentIntelligenceService {
       }
       
       // Apply standard wage patterns to the limited search text
-      const wagePattern = /(?:1\s+Wages|Box\s*1)[\\s\\S]*?\\$?([0-9,]+\\.?\\d{0,2})/i;
+      const wagePattern = /(?:1\s+Wages|Box\s*1)[\s\S]*?\$?([0-9,]+\.?\d{0,2})/i;
       const wageMatch = searchText.match(wagePattern);
       
       if (wageMatch && wageMatch[1]) {
