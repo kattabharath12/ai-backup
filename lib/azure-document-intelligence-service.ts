@@ -1909,31 +1909,37 @@ export class AzureDocumentIntelligenceService {
       }
     }
     
-    // Standard wage extraction patterns
+    // Fixed wage extraction patterns that handle the actual OCR format
     const wagePatterns = [
-      // Pattern 1: "1 Wages, tips, other compensation" followed by amount
+      // Pattern 1: "1" on one line, then "Wages, tips, other comp." on next line with amount
+      {
+        name: 'BOX_1_MULTILINE',
+        pattern: /(?:^|\n)\s*1\s*\n\s*Wages,?\s*tips,?\s*other\s+comp\.?\s*([0-9,]+\.?\d{0,2})/i,
+        example: "1\nWages, tips, other comp. 500000.00"
+      },
+      // Pattern 2: Direct match on wages text with amount (most reliable)
+      {
+        name: 'WAGES_DIRECT',
+        pattern: /Wages,?\s*tips,?\s*other\s+comp\.?\s*([0-9,]+\.?\d{0,2})/i,
+        example: "Wages, tips, other comp. 500000.00"
+      },
+      // Pattern 3: "1 Wages, tips, other compensation" on same line (traditional format)
       {
         name: 'BOX_1_STANDARD',
         pattern: /1\s+Wages,?\s*tips,?\s*other\s+compensation\s*[\n\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        example: "1 Wages, tips, other compensation\n$50,000.00"
+        example: "1 Wages, tips, other compensation $50,000.00"
       },
-      // Pattern 2: Just "1" followed by amount
-      {
-        name: 'BOX_1_SIMPLE',
-        pattern: /(?:^|\n)\s*1\s+\$?([0-9,]+\.?\d{0,2})/m,
-        example: "1 50000.00"
-      },
-      // Pattern 3: "Box 1" followed by amount
+      // Pattern 4: "Box 1" followed by amount
       {
         name: 'BOX_1_EXPLICIT',
         pattern: /Box\s*1[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
         example: "Box 1: $50,000.00"
       },
-      // Pattern 4: "Wages" followed by amount
+      // Pattern 5: "1" followed immediately by amount (simple format)
       {
-        name: 'WAGES_KEYWORD',
-        pattern: /Wages[:\s]*\$?([0-9,]+\.?\d{0,2})/i,
-        example: "Wages: $50,000.00"
+        name: 'BOX_1_SIMPLE',
+        pattern: /(?:^|\n)\s*1\s+\$?([0-9,]+\.?\d{0,2})/m,
+        example: "1 50000.00"
       }
     ];
     
@@ -1944,9 +1950,11 @@ export class AzureDocumentIntelligenceService {
         const amount = parseFloat(amountStr);
         
         // Validate the amount (should be reasonable for wages)
-        if (!isNaN(amount) && amount > 0 && amount < 100000000) { // Max $100M (updated limit)
+        if (!isNaN(amount) && amount > 0 && amount < 100000000) { // Max $100M
           console.log(`✅ [Azure DI OCR] Found wages using ${patternInfo.name}: $${amount}`);
           return amount;
+        } else {
+          console.log(`⚠️ [Azure DI OCR] Pattern ${patternInfo.name} matched but amount invalid: "${match[1]}" -> ${amount}`);
         }
       }
     }
