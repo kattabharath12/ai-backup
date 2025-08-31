@@ -1279,27 +1279,33 @@ export class AzureDocumentIntelligenceService {
     
     // === EMPLOYEE NAME PATTERNS ===
     const namePatterns = [
+      // W2_EMPLOYEE_NAME_EF_FORMAT: Extract from "e/f Employee's name, address, and ZIP code [NAME]"
+      {
+        name: 'W2_EMPLOYEE_NAME_EF_FORMAT',
+        pattern: /e\/f\s+Employee'?s?\s+name,?\s+address,?\s+and\s+ZIP\s+code\s+([A-Za-z\s]+?)(?:\s+\d|\n|$)/i,
+        example: "e/f Employee's name, address, and ZIP code MICHAEL JACKSON"
+      },
       // W2_EMPLOYEE_NAME_PRECISE: Extract from "e Employee's first name and initial Last name [NAME]"
       {
         name: 'W2_EMPLOYEE_NAME_PRECISE',
         pattern: /e\s+Employee'?s?\s+first\s+name\s+and\s+initial\s+Last\s+name\s+([A-Za-z\s]+?)(?:\s+\d|\n|f\s+Employee'?s?\s+address|$)/i,
         example: "e Employee's first name and initial Last name Michelle Hicks"
       },
-      // EMPLOYEE_NAME_MULTILINE: Extract name that appears after "Employee's name" label
+      // EMPLOYEE_NAME_MULTILINE: Extract name that appears after "Employee's name" label (but NOT after "Employer's name")
       {
         name: 'EMPLOYEE_NAME_MULTILINE',
-        pattern: /(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)\s*\n([A-Za-z\s]+?)(?:\n|$)/i,
+        pattern: /(?<!Employer'?s?\s)(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)\s*\n([A-Za-z\s]+?)(?:\n|$)/i,
         example: "Employee's name\nJordan Blake"
       },
-      // EMPLOYEE_NAME_BASIC: Basic employee name extraction
+      // EMPLOYEE_NAME_BASIC: Basic employee name extraction (but NOT after "Employer's name")
       {
         name: 'EMPLOYEE_NAME_BASIC',
-        pattern: /(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)[:\s]+([A-Za-z\s]+?)(?:\s+\d|\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|SSN|address|street|$)/i,
+        pattern: /(?<!Employer'?s?\s)(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME)[:\s]+([A-Za-z\s]+?)(?:\s+\d|\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|SSN|address|street|$)/i,
         example: "Employee's name JOHN DOE"
       },
       {
         name: 'EMPLOYEE_NAME_COLON',
-        pattern: /(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME):\s*([A-Za-z\s]+?)(?:\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|SSN|address|street|$)/i,
+        pattern: /(?<!Employer'?s?\s)(?:Employee'?s?\s+name|EMPLOYEE'?S?\s+NAME):\s*([A-Za-z\s]+?)(?:\n|Employee'?s?\s+|EMPLOYEE'?S?\s+|SSN|address|street|$)/i,
         example: "Employee's name: JOHN DOE"
       }
     ];
@@ -1320,19 +1326,29 @@ export class AzureDocumentIntelligenceService {
     // === SSN PATTERNS ===
     const ssnPatterns = [
       {
+        name: 'SSN_W2_A_FORMAT',
+        pattern: /a\s+Employee'?s?\s+SSA\s+number\s+([X\d]{3}[-\s]?[X\d]{2}[-\s]?[X\d\s]+)/i,
+        example: "a Employee's SSA number XXX-XX-0000"
+      },
+      {
         name: 'SSN_BASIC',
-        pattern: /(?:Employee'?s?\s+SSN|EMPLOYEE'?S?\s+SSN|SSN)[:\s]*(\d{3}[-\s]?\d{2}[-\s]?\d{4})/i,
+        pattern: /(?:Employee'?s?\s+SSN|EMPLOYEE'?S?\s+SSN|SSN)[:\s]*([X\d]{3}[-\s]?[X\d]{2}[-\s]?[X\d\s]+)/i,
         example: "Employee's SSN: 123-45-6789"
       },
       {
         name: 'SSN_MULTILINE',
-        pattern: /(?:Employee'?s?\s+SSN|EMPLOYEE'?S?\s+SSN|SSN)\s*\n(\d{3}[-\s]?\d{2}[-\s]?\d{4})/i,
+        pattern: /(?:Employee'?s?\s+SSN|EMPLOYEE'?S?\s+SSN|SSN)\s*\n([X\d]{3}[-\s]?[X\d]{2}[-\s]?[X\d\s]+)/i,
         example: "Employee's SSN\n123-45-6789"
       },
       {
+        name: 'SSN_SSA_NUMBER',
+        pattern: /(?:Employee'?s?\s+SSA\s+number|EMPLOYEE'?S?\s+SSA\s+NUMBER)[:\s]*([X\d]{3}[-\s]?[X\d]{2}[-\s]?[X\d\s]+)/i,
+        example: "Employee's SSA number XXX-XX-0000"
+      },
+      {
         name: 'SSN_STANDALONE',
-        pattern: /\b(\d{3}[-\s]\d{2}[-\s]\d{4})\b/,
-        example: "123-45-6789"
+        pattern: /\b([X\d]{3}[-\s][X\d]{2}[-\s][X\d\s]+)\b/,
+        example: "XXX-XX-0000"
       }
     ];
     
@@ -1351,6 +1367,12 @@ export class AzureDocumentIntelligenceService {
     
     // === ADDRESS PATTERNS ===
     const addressPatterns = [
+      // W2_ADDRESS_EF_FORMAT: Extract from "e/f Employee's name, address, and ZIP code [NAME] [ADDRESS]"
+      {
+        name: 'W2_ADDRESS_EF_FORMAT',
+        pattern: /e\/f\s+Employee'?s?\s+name,?\s+address,?\s+and\s+ZIP\s+code\s+[A-Za-z\s]+\s+([0-9]+\s+[A-Za-z\s]+(?:APT\s+\d+)?)\s+([A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)/i,
+        example: "e/f Employee's name, address, and ZIP code MICHAEL JACKSON 1103 BERNARD ST APT 712 DENTON, TX 76201"
+      },
       // W2_ADDRESS_SPLIT: Extract split address from W2 form (street after name, city/state/zip later)
       {
         name: 'W2_ADDRESS_SPLIT',
@@ -1371,12 +1393,12 @@ export class AzureDocumentIntelligenceService {
       },
       {
         name: 'ADDRESS_MULTILINE',
-        pattern: /(?:Employee'?s?\s+address|EMPLOYEE'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employer'?s?\s+|EMPLOYER'?S?\s+|$)/i,
+        pattern: /(?<!Employer'?s?\s)(?:Employee'?s?\s+address|EMPLOYEE'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employer'?s?\s+|EMPLOYER'?S?\s+|$)/i,
         example: "Employee's address\n123 Main St\nAnytown, ST 12345"
       },
       {
         name: 'ADDRESS_BASIC',
-        pattern: /(?:Employee'?s?\s+address|EMPLOYEE'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employer'?s?\s+|EMPLOYER'?S?\s+|$)/i,
+        pattern: /(?<!Employer'?s?\s)(?:Employee'?s?\s+address|EMPLOYEE'?S?\s+ADDRESS)[:\s]+([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Employer'?s?\s+|EMPLOYER'?S?\s+|$)/i,
         example: "Employee's address: 123 Main St, Anytown, ST 12345"
       }
     ];
@@ -1387,7 +1409,12 @@ export class AzureDocumentIntelligenceService {
       if (match) {
         let address = '';
         
-        if (patternInfo.name === 'W2_ADDRESS_SPLIT') {
+        if (patternInfo.name === 'W2_ADDRESS_EF_FORMAT') {
+          // For EF format pattern: [street] [city state zip]
+          if (match[1] && match[2]) {
+            address = `${match[1].trim()} ${match[2].trim()}`;
+          }
+        } else if (patternInfo.name === 'W2_ADDRESS_SPLIT') {
           // For split pattern: [street] [city state zip]
           if (match[1] && match[2]) {
             address = `${match[1].trim()} ${match[2].trim()}`;
@@ -1418,6 +1445,11 @@ export class AzureDocumentIntelligenceService {
     // === EMPLOYER NAME PATTERNS ===
     const employerNamePatterns = [
       {
+        name: 'EMPLOYER_NAME_C_FORMAT',
+        pattern: /c\s+Employer'?s?\s+name,?\s+address,?\s+and\s+ZIP\s+code\s+([A-Za-z\s&.,'-]+?)(?:\s+\d|\n|$)/i,
+        example: "c Employer's name, address, and ZIP code Silverpine Technologies"
+      },
+      {
         name: 'EMPLOYER_NAME_MULTILINE',
         pattern: /(?:Employer'?s?\s+name|EMPLOYER'?S?\s+NAME)\s*\n([A-Za-z\s&.,'-]+?)(?:\n|$)/i,
         example: "Employer's name\nAcme Corporation"
@@ -1445,6 +1477,11 @@ export class AzureDocumentIntelligenceService {
     // === EMPLOYER ADDRESS PATTERNS ===
     const employerAddressPatterns = [
       {
+        name: 'EMPLOYER_ADDRESS_C_FORMAT',
+        pattern: /c\s+Employer'?s?\s+name,?\s+address,?\s+and\s+ZIP\s+code\s+[A-Za-z\s&.,'-]+\s+([0-9]+\s+[A-Za-z\s]+(?:Drive|Street|St|Ave|Avenue|Blvd|Boulevard|Road|Rd|Lane|Ln)?\.?)\s*,?\s*([A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)/i,
+        example: "c Employer's name, address, and ZIP code Silverpine Technologies 4555 Briarpark Drive, Houston, TX 77042"
+      },
+      {
         name: 'EMPLOYER_ADDRESS_MULTILINE',
         pattern: /(?:Employer'?s?\s+address|EMPLOYER'?S?\s+ADDRESS)\s*\n([^\n]+(?:\n[^\n]+)*?)(?:\n\s*\n|Control\s+number|$)/i,
         example: "Employer's address\n456 Business Ave\nBusiness City, ST 67890"
@@ -1460,7 +1497,18 @@ export class AzureDocumentIntelligenceService {
     for (const patternInfo of employerAddressPatterns) {
       const match = ocrText.match(patternInfo.pattern);
       if (match && match[1]) {
-        const address = match[1].trim().replace(/\n+/g, ' ');
+        let address = '';
+        
+        if (patternInfo.name === 'EMPLOYER_ADDRESS_C_FORMAT') {
+          // For C format pattern: [street] [city state zip]
+          if (match[1] && match[2]) {
+            address = `${match[1].trim()}, ${match[2].trim()}`;
+          }
+        } else {
+          // For other patterns: use first capture group
+          address = match[1].trim().replace(/\n+/g, ' ');
+        }
+        
         if (address.length > 5) {
           personalInfo.employerAddress = address;
           console.log(`✅ [Azure DI OCR] Found employer address using ${patternInfo.name}:`, address);
