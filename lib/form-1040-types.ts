@@ -29,6 +29,13 @@ export interface Form1040Data {
     sourceDocument: string;
     sourceDocumentId: string;
   };
+
+  // ADD THIS NEW PROPERTY HERE:
+  employerInfo?: {
+    name: string;
+    address: string;
+    ein: string;
+  };
   
   // Dependents
   dependents: Dependent[];
