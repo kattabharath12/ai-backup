@@ -52,16 +52,22 @@ export class W2ToForm1040Mapper {
       console.log('✅ [W2 MAPPER] Mapped SSN:', form1040Data.ssn);
     }
 
-    // Enhanced address mapping - use pre-parsed components if available, otherwise parse full address
+    // Enhanced address mapping with validation and OCR fallback
+    console.log('🔍 [W2 MAPPER] Starting address mapping...');
     const employeeAddress = actualW2Data.employeeAddress || actualW2Data.Employee?.Address || actualW2Data['Employee.Address'];
-    
+    let addressMapped = false;
+
     // Check if address components are already parsed by Azure DI service
     if (actualW2Data.employeeAddressStreet || actualW2Data.employeeCity || actualW2Data.employeeState || actualW2Data.employeeZipCode) {
       console.log('🔍 [W2 MAPPER] Using pre-parsed address components from Azure DI service');
+      
+      // ALWAYS override address fields for each document
       form1040Data.address = actualW2Data.employeeAddressStreet || '';
       form1040Data.city = actualW2Data.employeeCity || '';
       form1040Data.state = actualW2Data.employeeState || '';
       form1040Data.zipCode = actualW2Data.employeeZipCode || '';
+      addressMapped = true;
+      
       console.log('✅ [W2 MAPPER] Mapped pre-parsed address:', {
         street: form1040Data.address,
         city: form1040Data.city,
@@ -71,11 +77,14 @@ export class W2ToForm1040Mapper {
     } else if (employeeAddress) {
       console.log('🔍 [W2 MAPPER] Parsing employee address from W2:', employeeAddress);
       const addressParts = this.parseAddress(employeeAddress);
-      // Always use W2 data for address, overriding any existing data
+      
+      // ALWAYS override address fields for each document
       form1040Data.address = addressParts.street;
       form1040Data.city = addressParts.city;
       form1040Data.state = addressParts.state;
       form1040Data.zipCode = addressParts.zipCode;
+      addressMapped = true;
+      
       console.log('✅ [W2 MAPPER] Mapped parsed address:', {
         street: form1040Data.address,
         city: form1040Data.city,
@@ -85,7 +94,7 @@ export class W2ToForm1040Mapper {
     }
 
     // OCR fallback for missing OR suspicious employee information
-    if ((!employeeName || !employeeAddress) && actualW2Data.fullText) {
+    if ((!employeeName || !addressMapped) && actualW2Data.fullText) {
       console.log('🔍 [W2 MAPPER] Employee info missing/suspicious, attempting OCR extraction...');
       const employeeInfo = this.extractEmployeeInfoFromOCR(actualW2Data.fullText);
       
@@ -96,13 +105,27 @@ export class W2ToForm1040Mapper {
         console.log('✅ [W2 MAPPER] Extracted employee name from OCR:', employeeInfo.name);
       }
       
-      if (!employeeAddress && employeeInfo.address) {
+      if (!addressMapped && employeeInfo.address) {
         const addressParts = this.parseAddress(employeeInfo.address);
         form1040Data.address = addressParts.street;
         form1040Data.city = addressParts.city;
         form1040Data.state = addressParts.state;
         form1040Data.zipCode = addressParts.zipCode;
         console.log('✅ [W2 MAPPER] Extracted employee address from OCR:', employeeInfo.address);
+      }
+    }
+
+    // Force OCR fallback if still no address found
+    if (!addressMapped && actualW2Data.fullText) {
+      console.log('⚠️ [W2 MAPPER] No address found in structured data, forcing OCR extraction...');
+      const employeeInfo = this.extractEmployeeInfoFromOCR(actualW2Data.fullText);
+      if (employeeInfo.address) {
+        const addressParts = this.parseAddress(employeeInfo.address);
+        form1040Data.address = addressParts.street;
+        form1040Data.city = addressParts.city;
+        form1040Data.state = addressParts.state;
+        form1040Data.zipCode = addressParts.zipCode;
+        console.log('✅ [W2 MAPPER] Force-extracted address from OCR:', employeeInfo.address);
       }
     }
 
@@ -121,7 +144,7 @@ export class W2ToForm1040Mapper {
       }
     }
 
-    // Create personal info object for easy access
+    // Create personal info object for easy access - ALWAYS use current document data
     const personalInfo = {
       firstName: form1040Data.firstName ?? '',
       lastName: form1040Data.lastName ?? '',
@@ -269,26 +292,39 @@ export class W2ToForm1040Mapper {
       /e\s+Employee's\s+first\s+name\s+and\s+initial\s+Last\s+name\s+([A-Z]+\s+[A-Z]+)/i,
       
       // Pattern 5: "e/f Employee's name, address, and ZIP code MICHELLE HICKS"
-      /e\/f\s+Employee's\s+name,\s+address,?\s+and\s+ZIP\s+code\s+([A-Z]+\s+[A-Z]+)/i
+      /e\/f\s+Employee's\s+name,\s+address,?\s+and\s+ZIP\s+code\s+([A-Z]+\s+[A-Z]+)/i,
+      
+      // Pattern 6: Multi-line format "e/f Employee's name, address and ZIP code\nMICHAEL\nJACKSON\n1103..."
+      /e\/f\s+Employee's\s+name,\s+address\s+and\s+ZIP\s+code\s*\n\s*([A-Z]+)\s*\n\s*([A-Z]+)\s*\n\s*(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5}[-\d]*)/i
     ];
     
-    for (const pattern of employeePatterns) {
+    for (let i = 0; i < employeePatterns.length; i++) {
+      const pattern = employeePatterns[i];
       const match = ocrText.match(pattern);
       if (match && match[1]) {
-        const name = match[1].trim();
+        let name, address;
         
-        // Ultra-strict validation - only accept if it looks like a real name
-        if (this.isRealPersonName(name)) {
-          console.log('✅ [W2 OCR] Found employee name:', name);
+        if (i === 5) { // Multi-line format
+          name = `${match[1].trim()} ${match[2].trim()}`;
+          address = match[3]?.trim();
+        } else {
+          name = match[1].trim();
           
           // Try to find address near the name
           const nameIndex = ocrText.indexOf(match[0]);
           const afterName = ocrText.substring(nameIndex + match[0].length, nameIndex + match[0].length + 200);
           const addressMatch = afterName.match(/(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5}[-\d]*)/i);
+          address = addressMatch ? addressMatch[1].trim() : '';
+        }
+        
+        // Ultra-strict validation - only accept if it looks like a real name
+        if (this.isRealPersonName(name)) {
+          console.log('✅ [W2 OCR] Found employee name:', name);
+          console.log('✅ [W2 OCR] Found employee address:', address);
           
           return {
             name: this.formatName(name),
-            address: addressMatch ? addressMatch[1].trim() : ''
+            address: address || ''
           };
         }
       }
@@ -450,7 +486,7 @@ export class W2ToForm1040Mapper {
       mappings.push({
         w2Field: 'Box 3 - Social Security Wages',
         w2Value: w2Data.socialSecurityWages,
-        form1040Line: 'Line 25a',
+        form1040Line: 'Informational',
         form1040Value: this.parseAmount(w2Data.socialSecurityWages),
         description: 'Social security wages (informational)'
       });
