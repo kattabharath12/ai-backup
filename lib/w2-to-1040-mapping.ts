@@ -77,9 +77,9 @@ export class W2ToForm1040Mapper {
       });
     }
 
-    // Universal OCR fallback for missing employee information
+    // Ultra-targeted OCR fallback for missing employee information
     if ((!employeeName || !employeeAddress) && actualW2Data.fullText) {
-      console.log('🔍 [W2 MAPPER] Employee info missing, attempting universal OCR extraction...');
+      console.log('🔍 [W2 MAPPER] Employee info missing, attempting ultra-targeted OCR extraction...');
       const employeeInfo = this.extractEmployeeInfoFromOCR(actualW2Data.fullText);
       
       if (!employeeName && employeeInfo.name) {
@@ -99,7 +99,7 @@ export class W2ToForm1040Mapper {
       }
     }
 
-    // Universal OCR fallback for missing employer information
+    // OCR fallback for missing employer information
     if (actualW2Data.fullText) {
       const employerInfo = this.extractEmployerInfoFromOCR(actualW2Data.fullText);
       
@@ -220,264 +220,133 @@ export class W2ToForm1040Mapper {
   }
 
   /**
-   * Universal OCR extraction for employee information - works with all W-2 formats
+   * Ultra-targeted OCR extraction - only matches employee section labels
    */
   private static extractEmployeeInfoFromOCR(ocrText: string): { name?: string; address?: string } {
-    console.log('🔍 [W2 OCR] Universal employee info extraction starting...');
+    console.log('🔍 [W2 OCR] Ultra-targeted employee extraction starting...');
     
-    // Comprehensive exclusion list for false positives
-    const excludePatterns = [
-      'EARNINGS SUMMARY', 'PAY PERIOD', 'TRIAL', 'EVALUATION', 'PURPOSES ONLY',
-      'SUBSTITUTE', 'STATEMENT', 'COPY', 'FEDERAL', 'STATE', 'LOCAL', 'CITY',
-      'WAGE AND TAX', 'FORM W-2', 'OMB NO', 'DEPARTMENT', 'TREASURY', 'IRS',
-      'INTERNAL REVENUE', 'SERVICE', 'INSTRUCTIONS', 'EMPLOYEE', 'EMPLOYER',
-      'SOCIAL SECURITY', 'MEDICARE', 'WITHHOLDING', 'DEDUCTION', 'CREDIT',
-      'FILING', 'RETURN', 'INCOME TAX', 'GROSS PAY', 'NET PAY', 'YTD',
-      'YEAR TO DATE', 'QUARTERLY', 'MONTHLY', 'WEEKLY', 'BIWEEKLY',
-      'PAYROLL', 'BENEFITS', 'DEDUCTIONS', 'ALLOWANCES', 'EXEMPTIONS',
-      'MARITAL STATUS', 'DEPENDENTS', 'WITHHOLDING ALLOWANCES',
-      'BOX', 'LINE', 'SECTION', 'PART', 'SCHEDULE', 'ATTACHMENT',
-      'SEE INSTRUCTIONS', 'COMPLETE', 'ENTER', 'AMOUNT', 'TOTAL',
-      'SUBTOTAL', 'BALANCE', 'PREVIOUS', 'CURRENT', 'ADJUSTMENT'
+    // ONLY match text that comes AFTER specific employee section labels
+    const employeePatterns = [
+      // Pattern 1: "e Employee's first name and initial Last name Michelle Hicks"
+      /e\s+Employee's\s+first\s+name\s+and\s+initial\s+Last\s+name\s+([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+      
+      // Pattern 2: "Employee's name: Michelle Hicks"
+      /Employee's\s+name[:\s]+([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+      
+      // Pattern 3: "e/f Employee's name, address, and ZIP code Michelle Hicks"
+      /e\/f\s+Employee's\s+name,\s+address,?\s+and\s+ZIP\s+code\s+([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+      
+      // Pattern 4: Handle all caps names "e Employee's first name and initial Last name MICHELLE HICKS"
+      /e\s+Employee's\s+first\s+name\s+and\s+initial\s+Last\s+name\s+([A-Z]+\s+[A-Z]+)/i,
+      
+      // Pattern 5: "e/f Employee's name, address, and ZIP code MICHELLE HICKS"
+      /e\/f\s+Employee's\s+name,\s+address,?\s+and\s+ZIP\s+code\s+([A-Z]+\s+[A-Z]+)/i
     ];
-
-    // Universal patterns for employee name extraction
-    const namePatterns = [
-      // Pattern 1: Standard W-2 format "e/f Employee's name, address, and ZIP code NAME ADDRESS"
-      {
-        regex: /e\/f\s+Employee's\s+name,\s+address,?\s+and\s+ZIP\s+code\s+([A-Z][A-Z\s]{2,30}?)\s+(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: 1,
-        addressIndex: 2,
-        score: 10
-      },
-      
-      // Pattern 2: Multi-line format
-      {
-        regex: /e\/f\s+Employee's\s+name,\s+address\s+and\s+ZIP\s+code\s*\n\s*([A-Z]+)\s*\n\s*([A-Z]+)\s*\n\s*(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: [1, 2], // Combine first and last name
-        addressIndex: 3,
-        score: 9
-      },
-      
-      // Pattern 3: Simplified employee section
-      {
-        regex: /Employee's\s+name[^:]*:\s*([A-Z][A-Z\s]{2,30}?)(?:\s+\d+|\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: 1,
-        addressIndex: null,
-        score: 8
-      },
-      
-      // Pattern 4: Name followed by address pattern
-      {
-        regex: /\b([A-Z]{2,}\s+[A-Z]{2,})\s+(\d{3,5}\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: 1,
-        addressIndex: 2,
-        score: 7,
-        contextCheck: true // Requires context validation
-      },
-      
-      // Pattern 5: Two capitalized words followed by address
-      {
-        regex: /\b([A-Z]{2,}\s+[A-Z]{2,})\s*\n\s*(\d{3,5}\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: 1,
-        addressIndex: 2,
-        score: 6,
-        contextCheck: true
-      },
-      
-      // Pattern 6: Name in quotes (some OCR formats)
-      {
-        regex: /"([A-Z][A-Z\s]{2,30}?)"\s*(?:.*?)(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i,
-        nameIndex: 1,
-        addressIndex: 2,
-        score: 8
-      }
-    ];
-
-    const candidates = [];
-
-    // Try each pattern
-    for (const pattern of namePatterns) {
-      const match = ocrText.match(pattern.regex);
-      if (match) {
-        let name, address;
+    
+    for (const pattern of employeePatterns) {
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].trim();
         
-        if (Array.isArray(pattern.nameIndex)) {
-          // Combine multiple name parts
-          name = pattern.nameIndex.map(i => match[i]).join(' ').trim();
-        } else {
-          name = match[pattern.nameIndex]?.trim();
-        }
-        
-        if (pattern.addressIndex) {
-          address = match[pattern.addressIndex]?.trim();
-        }
-
-        if (name) {
-          // Validate name
-          const isValidName = this.validateEmployeeName(name, excludePatterns, ocrText, pattern.contextCheck);
+        // Ultra-strict validation - only accept if it looks like a real name
+        if (this.isRealPersonName(name)) {
+          console.log('✅ [W2 OCR] Found employee name:', name);
           
-          if (isValidName) {
-            candidates.push({
-              name: this.formatName(name),
-              address: address || '',
-              score: pattern.score,
-              pattern: pattern.regex.source
-            });
-            
-            console.log(`✅ [W2 OCR] Found candidate: ${name} (score: ${pattern.score})`);
-          }
+          // Try to find address near the name
+          const nameIndex = ocrText.indexOf(match[0]);
+          const afterName = ocrText.substring(nameIndex + match[0].length, nameIndex + match[0].length + 200);
+          const addressMatch = afterName.match(/(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5}[-\d]*)/i);
+          
+          return {
+            name: this.formatName(name),
+            address: addressMatch ? addressMatch[1].trim() : ''
+          };
         }
       }
     }
-
-    // Return the best candidate
-    if (candidates.length > 0) {
-      candidates.sort((a, b) => b.score - a.score);
-      const best = candidates[0];
-      
-      console.log('✅ [W2 OCR] Selected best candidate:', best.name);
-      return { name: best.name, address: best.address };
-    }
-
+    
     console.log('⚠️ [W2 OCR] No valid employee name found');
     return {};
   }
 
   /**
-   * Validates if extracted text is a real employee name
+   * Ultra-strict validation for real person names
    */
-  private static validateEmployeeName(name: string, excludePatterns: string[], ocrText: string, contextCheck: boolean = false): boolean {
-    // Basic validation
-    if (!name || name.length < 3 || name.length > 50) return false;
+  private static isRealPersonName(name: string): boolean {
+    if (!name || name.length < 5 || name.length > 30) return false;
     
-    // Must have at least 2 words
     const words = name.trim().split(/\s+/);
-    if (words.length < 2) return false;
+    if (words.length !== 2) return false; // Exactly first and last name
     
-    // Each word should be reasonable length
-    if (words.some(word => word.length < 2 || word.length > 20)) return false;
+    // Each word should be 2-15 characters, all letters
+    for (const word of words) {
+      if (word.length < 2 || word.length > 15) return false;
+      if (!/^[A-Za-z]+$/.test(word)) return false;
+    }
     
-    // Check against exclusion patterns
+    // Absolutely exclude any business/document terms
+    const forbidden = [
+      'REISSUED', 'STATEMENT', 'EARNINGS', 'SUMMARY', 'TRIAL', 'EVALUATION',
+      'COPY', 'FEDERAL', 'STATE', 'FORM', 'WAGE', 'TAX', 'EMPLOYEE', 'EMPLOYER',
+      'DEPARTMENT', 'TREASURY', 'SERVICE', 'INTERNAL', 'REVENUE', 'PURPOSES',
+      'ONLY', 'REMOVE', 'WITH', 'KEY', 'SAFE', 'ACCURATE', 'FAST', 'USE',
+      'FILE', 'VISIT', 'WEBSITE', 'CONTROL', 'NUMBER', 'SOCIAL', 'SECURITY',
+      'MEDICARE', 'WITHHOLDING', 'TIPS', 'COMPENSATION', 'ALLOCATED', 'ADVANCE',
+      'DEPENDENT', 'CARE', 'BENEFITS', 'NONQUALIFIED', 'PLANS', 'STATUTORY',
+      'RETIREMENT', 'THIRD', 'PARTY', 'SICK', 'PAY', 'OTHER', 'ENCLOSED',
+      'NOTICE', 'INSTRUCTIONS', 'LOCAL', 'LOCALITY', 'JUNCTION', 'FERRY'
+    ];
+    
     const upperName = name.toUpperCase();
-    for (const pattern of excludePatterns) {
-      if (upperName.includes(pattern)) {
-        console.log(`❌ [W2 OCR] Excluded "${name}" - matches pattern: ${pattern}`);
-        return false;
-      }
-    }
-    
-    // Context check for ambiguous patterns
-    if (contextCheck) {
-      const nameIndex = ocrText.indexOf(name);
-      if (nameIndex !== -1) {
-        const before = ocrText.substring(Math.max(0, nameIndex - 100), nameIndex).toUpperCase();
-        const after = ocrText.substring(nameIndex + name.length, nameIndex + name.length + 100).toUpperCase();
-        
-        // Should not appear in header sections
-        if (before.includes('EARNINGS SUMMARY') || before.includes('TRIAL') || 
-            after.includes('COPY') || after.includes('STATEMENT')) {
-          console.log(`❌ [W2 OCR] Excluded "${name}" - appears in header context`);
-          return false;
-        }
-        
-        // Should appear near employee-related text
-        if (!before.includes('EMPLOYEE') && !after.includes('EMPLOYEE') &&
-            !before.includes('NAME') && !after.includes('ADDRESS')) {
-          console.log(`❌ [W2 OCR] Excluded "${name}" - no employee context found`);
-          return false;
-        }
-      }
-    }
-    
-    // Additional validation: should not be all the same letter
-    if (new Set(name.replace(/\s/g, '')).size < 3) return false;
-    
-    // Should not contain numbers (except maybe Jr, Sr, III)
-    if (/\d/.test(name) && !/\b(JR|SR|III|IV|V)\b/i.test(name)) return false;
-    
-    return true;
+    return !forbidden.some(term => upperName.includes(term));
   }
 
   /**
-   * Universal OCR extraction for employer information
+   * Enhanced OCR extraction for employer information from multi-line format
    */
   private static extractEmployerInfoFromOCR(ocrText: string): { name?: string; address?: string; ein?: string } {
-    console.log('🔍 [W2 OCR] Universal employer info extraction starting...');
+    console.log('🔍 [W2 OCR] Extracting employer info from OCR text...');
     
-    const employerPatterns = [
-      // Standard employer section
-      /c\s+Employer's\s+name,\s+address,\s+and\s+ZIP\s+code\s*\n([\s\S]*?)(?=\n\s*[a-z]\s+[A-Z]|$)/i,
-      
-      // Alternative employer section
-      /Employer's\s+name[^:]*:\s*([A-Z][A-Z\s&.,]+?)\s*\n\s*([A-Z0-9\s,.-]+?\s+[A-Z]{2}\s+\d{5})/i,
-      
-      // Employer info in single line
-      /Employer[^:]*:\s*([A-Z][A-Z\s&.,]+?)\s+(\d+\s+[A-Z\s]+?\s+[A-Z]{2}\s+\d{5})/i
-    ];
-
+    // Pattern to match employer section with multi-line data
+    const employerPattern = /c\s+Employer's\s+name,\s+address,\s+and\s+ZIP\s+code\s*\n([\s\S]*?)(?=\n\s*[0-9]\s+[A-Z]|$)/i;
+    const match = ocrText.match(employerPattern);
+    
     let name, address;
-
-    for (const pattern of employerPatterns) {
-      const match = ocrText.match(pattern);
-      if (match) {
-        if (pattern === employerPatterns[0]) {
-          // Multi-line format
-          const employerBlock = match[1].trim();
-          const lines = employerBlock.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-          
-          if (lines.length >= 2) {
-            name = lines[0];
-            address = lines.slice(1).join(' ');
-          }
-        } else {
-          // Single line formats
-          name = match[1]?.trim();
-          address = match[2]?.trim();
-        }
+    
+    if (match) {
+      const employerBlock = match[1].trim();
+      console.log('✅ [W2 OCR] Found employer block:', employerBlock);
+      
+      // Split lines and extract name and address
+      const lines = employerBlock.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+      
+      if (lines.length >= 2) {
+        name = lines[0];
+        address = lines.slice(1).join(' ');
         
-        if (name && this.validateEmployerName(name)) {
-          console.log('✅ [W2 OCR] Found employer:', name);
-          break;
-        }
+        console.log('✅ [W2 OCR] Extracted employer name:', name);
+        console.log('✅ [W2 OCR] Extracted employer address:', address);
       }
     }
-
-    // Extract EIN
-    const einPatterns = [
-      /b\s+Employer's\s+FED\s+ID\s+number\s+([0-9]{2}-[0-9]{7})/i,
-      /Employer\s+ID[^:]*:\s*([0-9]{2}-[0-9]{7})/i,
-      /EIN[^:]*:\s*([0-9]{2}-[0-9]{7})/i,
-      /Federal\s+ID[^:]*:\s*([0-9]{2}-[0-9]{7})/i
-    ];
-
-    let ein;
-    for (const pattern of einPatterns) {
-      const match = ocrText.match(pattern);
-      if (match) {
-        ein = match[1];
-        console.log('✅ [W2 OCR] Found EIN:', ein);
-        break;
-      }
+    
+    // Extract EIN from separate pattern
+    const einPattern = /b\s+Employer\s+identification\s+number\s+([0-9]{2}-[0-9]{7})/i;
+    const einMatch = ocrText.match(einPattern);
+    const ein = einMatch ? einMatch[1] : undefined;
+    
+    if (ein) {
+      console.log('✅ [W2 OCR] Extracted employer EIN:', ein);
     }
-
+    
+    if (!name && !address && !ein) {
+      console.log('⚠️ [W2 OCR] Could not extract employer info from OCR');
+    }
+    
     return { name, address, ein };
   }
 
   /**
-   * Validates employer name
-   */
-  private static validateEmployerName(name: string): boolean {
-    if (!name || name.length < 3 || name.length > 100) return false;
-    
-    const excludeWords = ['EMPLOYEE', 'WAGES', 'TIPS', 'COMPENSATION', 'WITHHOLDING', 'FEDERAL', 'STATE'];
-    const upperName = name.toUpperCase();
-    
-    return !excludeWords.some(word => upperName.includes(word));
-  }
-
-  /**
-   * Format name from "MICHAEL JACKSON" to "Michael Jackson"
+   * Format name from "MICHELLE HICKS" to "Michelle Hicks"
    */
   private static formatName(name: string): string {
     return name.toLowerCase()
@@ -611,71 +480,43 @@ export class W2ToForm1040Mapper {
   }
 
   /**
-   * Universal wages extraction from OCR text
+   * Extracts wages from OCR text using regex patterns for Box 1
    */
   private static extractWagesFromOCR(ocrText: string): number {
-    console.log('🔍 [W2 MAPPER OCR] Universal wages extraction starting...');
+    console.log('🔍 [W2 MAPPER OCR] Searching for wages in OCR text...');
     
-    // Comprehensive wage patterns for all formats
+    // Enhanced wage patterns to handle various OCR formats including high amounts
     const wagePatterns = [
-      // Standard Box 1 patterns
+      // Pattern: "1 Wages, tips, other compensation 500000.00"
       /\b1\s+Wages[,\s]*tips[,\s]*other\s+(?:comp|compensation)\.?\s+([\d,]+\.?\d*)/i,
+      // Pattern: "1. Wages, tips, other compensation: $500,000.00"
       /\b1\.?\s*Wages[,\s]*tips[,\s]*other\s+(?:comp|compensation)\.?[:\s]+\$?([\d,]+\.?\d*)/i,
-      /Box\s*1[^0-9]*?([\d,]+\.?\d*)/i,
-      
-      // Alternative formats
-      /Wages[,\s]*tips[,\s]*other\s+comp\.?\s+\$?([\d,]+\.?\d*)/i,
+      // Pattern: "Box 1 500000.00" or "1 500000.00"
+      /\b(?:Box\s*)?1\s+\$?([\d,]+\.?\d*)/i,
+      // Pattern: "Wages and tips 500000.00"
       /Wages\s+and\s+tips\s+\$?([\d,]+\.?\d*)/i,
-      /Total\s+wages\s+\$?([\d,]+\.?\d*)/i,
-      
-      // Multi-line patterns
+      // Pattern: "1 Wages, tips, other compensation" followed by amount on next line
       /\b1\s+Wages[,\s]*tips[,\s]*other\s+(?:comp|compensation)\.?[\s\n]+\$?([\d,]+\.?\d*)/i,
-      
-      // Numeric patterns with context
-      /(?:^|\n)\s*1\s+\$?([\d,]+\.?\d*)\s*(?:\n|$)/m,
-      
-      // Fallback patterns
-      /(?:wages|compensation)[^0-9]*?([\d,]{4,}\.?\d*)/i
+      // Pattern: "Wages, tips, other comp. 500000.00"
+      /Wages[,\s]*tips[,\s]*other\s+comp\.?\s+\$?([\d,]+\.?\d*)/i
     ];
 
-    const candidates = [];
-
     for (const pattern of wagePatterns) {
-      const matches = [...ocrText.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))];
-      
-      for (const match of matches) {
-        if (match[1]) {
-          const wageString = match[1];
-          const cleanedAmount = wageString.replace(/[,$\s]/g, '');
-          const parsedAmount = parseFloat(cleanedAmount);
-          
-          if (!isNaN(parsedAmount) && parsedAmount > 0 && parsedAmount < 100000000) {
-            // Score based on pattern specificity and context
-            let score = 1;
-            if (pattern.source.includes('Box\\s*1')) score += 3;
-            if (pattern.source.includes('Wages.*tips.*comp')) score += 2;
-            if (parsedAmount > 1000 && parsedAmount < 10000000) score += 1;
-            
-            candidates.push({
-              amount: parsedAmount,
-              score: score,
-              pattern: pattern.source,
-              match: match[0]
-            });
-            
-            console.log(`🔍 [W2 OCR] Found wage candidate: ${parsedAmount} (score: ${score})`);
-          }
+      const match = ocrText.match(pattern);
+      if (match && match[1]) {
+        const wageString = match[1];
+        console.log('🔍 [W2 MAPPER OCR] Found wage match:', wageString, 'using pattern:', pattern.source);
+        
+        // Parse the amount
+        const cleanedAmount = wageString.replace(/[,$\s]/g, '');
+        const parsedAmount = parseFloat(cleanedAmount);
+        
+        // Enhanced validation - allow amounts up to $100M (was limited to $10K before)
+        if (!isNaN(parsedAmount) && parsedAmount > 0 && parsedAmount < 100000000) {
+          console.log('✅ [W2 MAPPER OCR] Successfully parsed wages:', parsedAmount);
+          return parsedAmount;
         }
       }
-    }
-
-    // Return the best candidate
-    if (candidates.length > 0) {
-      candidates.sort((a, b) => b.score - a.score);
-      const best = candidates[0];
-      
-      console.log('✅ [W2 MAPPER OCR] Selected best wage candidate:', best.amount);
-      return best.amount;
     }
 
     console.log('⚠️ [W2 MAPPER OCR] No wages found in OCR text');
@@ -724,6 +565,7 @@ export class W2ToForm1040Mapper {
     }
     
     // Try space-separated format: "Street Address City STATE ZIP"
+    // Pattern: "0121 Gary Islands Apt. 691 Sandraport UT 35155-6840"
     const spaceMatch = address.match(/^(.+?)\s+([A-Za-z\s]+?)\s+([A-Z]{2})\s+(\d{5}(-\d{4})?)$/);
     if (spaceMatch) {
       const result = {
@@ -737,24 +579,34 @@ export class W2ToForm1040Mapper {
     }
     
     // Try alternative pattern where city might have multiple words
+    // Look for state (2 uppercase letters) followed by ZIP
     const stateZipPattern = /\s+([A-Z]{2})\s+(\d{5}(-\d{4})?)$/;
     const stateZipMatch = address.match(stateZipPattern);
     
     if (stateZipMatch) {
       const beforeStateZip = address.substring(0, address.length - stateZipMatch[0].length);
+      
+      // Split the remaining part to get street and city
+      // Assume the last word(s) before state is the city
       const words = beforeStateZip.trim().split(/\s+/);
       
-      let streetEndIndex = words.length - 1;
+      // Try to identify where street ends and city begins
+      // Look for common apartment indicators
+      let streetEndIndex = words.length - 1; // Default: everything except last word is street
       
+      // If we find apartment indicators, city is likely after them
       for (let i = 0; i < words.length; i++) {
         if (/^(apt|apartment|unit|suite|ste)\.?$/i.test(words[i])) {
+          // City starts after apartment number
           streetEndIndex = Math.min(i + 2, words.length - 1);
           break;
         }
       }
       
+      // For the specific format "0121 Gary Islands Apt. 691 Sandraport UT 35155-6840"
+      // We know "Sandraport" is the city
       if (words.length >= 2) {
-        streetEndIndex = words.length - 2;
+        streetEndIndex = words.length - 2; // Last word before state is city
       }
       
       const street = words.slice(0, streetEndIndex + 1).join(' ');
