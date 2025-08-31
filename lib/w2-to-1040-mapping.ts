@@ -26,10 +26,23 @@ export class W2ToForm1040Mapper {
 
     console.log('🔍 [W2 MAPPER] Using actualW2Data:', JSON.stringify(actualW2Data, null, 2));
 
-    // Personal Information Mapping - Enhanced to prioritize W2 data
+    // Personal Information Mapping - Enhanced to prioritize W2 data with OCR fallback
     console.log('🔍 [W2 MAPPER] Starting personal information mapping...');
     
-    const employeeName = actualW2Data.employeeName || actualW2Data.Employee?.Name || actualW2Data['Employee.Name'];
+    let employeeName = actualW2Data.employeeName || actualW2Data.Employee?.Name || actualW2Data['Employee.Name'];
+    let employeeSSN = actualW2Data.employeeSSN || actualW2Data.Employee?.SSN || actualW2Data['Employee.SSN'];
+    let employeeAddress = actualW2Data.employeeAddress || actualW2Data.Employee?.Address || actualW2Data['Employee.Address'];
+    
+    // OCR fallback for missing employee information
+    if ((!employeeName || !employeeSSN || !employeeAddress) && actualW2Data.fullText) {
+      console.log('🔍 [W2 MAPPER] Some employee info missing, attempting OCR extraction...');
+      const ocrEmployeeInfo = this.extractEmployeeInfoFromOCR(actualW2Data.fullText);
+      
+      employeeName = employeeName || ocrEmployeeInfo.employeeName;
+      employeeSSN = employeeSSN || ocrEmployeeInfo.employeeSSN;
+      employeeAddress = employeeAddress || ocrEmployeeInfo.employeeAddress;
+    }
+    
     if (employeeName) {
       console.log('🔍 [W2 MAPPER] Mapping employee name from W2:', employeeName);
       const nameParts = employeeName.trim().split(/\s+/);
@@ -39,7 +52,6 @@ export class W2ToForm1040Mapper {
       console.log('✅ [W2 MAPPER] Mapped name - First:', form1040Data.firstName, 'Last:', form1040Data.lastName);
     }
 
-    const employeeSSN = actualW2Data.employeeSSN || actualW2Data.Employee?.SSN || actualW2Data['Employee.SSN'];
     if (employeeSSN) {
       console.log('🔍 [W2 MAPPER] Mapping employee SSN from W2:', employeeSSN);
       // Always use W2 data for SSN, overriding any existing data
@@ -48,7 +60,6 @@ export class W2ToForm1040Mapper {
     }
 
     // Enhanced address mapping - use pre-parsed components if available, otherwise parse full address
-    const employeeAddress = actualW2Data.employeeAddress || actualW2Data.Employee?.Address || actualW2Data['Employee.Address'];
     
     // Check if address components are already parsed by Azure DI service
     if (actualW2Data.employeeAddressStreet || actualW2Data.employeeCity || actualW2Data.employeeState || actualW2Data.employeeZipCode) {
@@ -77,6 +88,31 @@ export class W2ToForm1040Mapper {
         state: form1040Data.state,
         zipCode: form1040Data.zipCode
       });
+    }
+
+    // Extract employer information with OCR fallback
+    let employerName = actualW2Data.employerName || actualW2Data.Employer?.Name || actualW2Data['Employer.Name'];
+    let employerAddress = actualW2Data.employerAddress || actualW2Data.Employer?.Address || actualW2Data['Employer.Address'];
+    let employerEIN = actualW2Data.employerEIN || actualW2Data.Employer?.EIN || actualW2Data['Employer.EIN'];
+    
+    // OCR fallback for missing employer information
+    if ((!employerName || !employerAddress || !employerEIN) && actualW2Data.fullText) {
+      console.log('🔍 [W2 MAPPER] Some employer info missing, attempting OCR extraction...');
+      const ocrEmployerInfo = this.extractEmployerInfoFromOCR(actualW2Data.fullText);
+      
+      employerName = employerName || ocrEmployerInfo.employerName;
+      employerAddress = employerAddress || ocrEmployerInfo.employerAddress;
+      employerEIN = employerEIN || ocrEmployerInfo.employerEIN;
+    }
+    
+    // Store employer information in the form data for reference
+    if (employerName || employerAddress || employerEIN) {
+      form1040Data.employerInfo = {
+        name: employerName || '',
+        address: employerAddress || '',
+        ein: employerEIN || ''
+      };
+      console.log('✅ [W2 MAPPER] Mapped employer info:', form1040Data.employerInfo);
     }
 
     // Create personal info object for easy access
@@ -316,6 +352,8 @@ export class W2ToForm1040Mapper {
     
     // Multiple regex patterns to match Box 1 wages
     const wagePatterns = [
+      // Pattern: "1 Wages, tips, other compensation" followed by amount on next line
+      /\b1\s+Wages[,\s]*tips[,\s]*other\s+compensation\s*\n\s*([\d,]+\.?\d*)/i,
       // Pattern: "1 Wages, tips, other compensation 161130.48"
       /\b1\s+Wages[,\s]*tips[,\s]*other\s+compensation\s+([\d,]+\.?\d*)/i,
       // Pattern: "1. Wages, tips, other compensation: $161,130.48"
@@ -323,9 +361,7 @@ export class W2ToForm1040Mapper {
       // Pattern: "Box 1 161130.48" or "1 161130.48"
       /\b(?:Box\s*)?1\s+\$?([\d,]+\.?\d*)/i,
       // Pattern: "Wages and tips 161130.48"
-      /Wages\s+and\s+tips\s+\$?([\d,]+\.?\d*)/i,
-      // Pattern: "1 Wages, tips, other compensation" followed by amount on next line
-      /\b1\s+Wages[,\s]*tips[,\s]*other\s+compensation[\s\n]+\$?([\d,]+\.?\d*)/i
+      /Wages\s+and\s+tips\s+\$?([\d,]+\.?\d*)/i
     ];
 
     for (const pattern of wagePatterns) {
@@ -347,6 +383,115 @@ export class W2ToForm1040Mapper {
 
     console.log('⚠️ [W2 MAPPER OCR] No wages found in OCR text');
     return 0;
+  }
+
+  /**
+   * Extracts employee information from multi-line OCR format
+   */
+  private static extractEmployeeInfoFromOCR(ocrText: string): {
+    employeeName?: string;
+    employeeAddress?: string;
+    employeeSSN?: string;
+  } {
+    console.log('🔍 [W2 MAPPER OCR] Extracting employee information...');
+    
+    const employeeInfo: any = {};
+    
+    // Extract employee section (e/f label followed by multi-line data until next section)
+    // Updated pattern to capture everything until we hit another section marker or end
+    const employeePattern = /e\/f\s+Employee's\s+name,\s+address,\s+and\s+ZIP\s+code\s*\n([\s\S]*?)(?=\n\s*[a-z]\s+[A-Z]|$)/i;
+    const employeeMatch = ocrText.match(employeePattern);
+    
+    if (employeeMatch) {
+      const employeeBlock = employeeMatch[1].trim();
+      console.log('🔍 [W2 MAPPER OCR] Found employee block:', employeeBlock);
+      
+      const lines = employeeBlock.split('\n').map(line => line.trim()).filter(line => line);
+      console.log('🔍 [W2 MAPPER OCR] Employee lines:', lines);
+      
+      if (lines.length > 0) {
+        // First line is the name
+        employeeInfo.employeeName = lines[0];
+        console.log('✅ [W2 MAPPER OCR] Employee name:', employeeInfo.employeeName);
+        
+        // Remaining lines form the address
+        if (lines.length > 1) {
+          employeeInfo.employeeAddress = lines.slice(1).join(' ');
+          console.log('✅ [W2 MAPPER OCR] Employee address:', employeeInfo.employeeAddress);
+        }
+      }
+    } else {
+      console.log('⚠️ [W2 MAPPER OCR] Employee pattern did not match');
+    }
+    
+    // Extract employee SSN
+    const ssnPatterns = [
+      /b\s+Employee's\s+social\s+security\s+number\s*\n\s*([X0-9]{3}-[X0-9]{2}-[0-9]{4})/i,
+      /Employee's\s+social\s+security\s+number\s*:?\s*([X0-9]{3}-[X0-9]{2}-[0-9]{4})/i,
+      /SSN\s*:?\s*([X0-9]{3}-[X0-9]{2}-[0-9]{4})/i
+    ];
+    
+    for (const pattern of ssnPatterns) {
+      const ssnMatch = ocrText.match(pattern);
+      if (ssnMatch) {
+        employeeInfo.employeeSSN = ssnMatch[1];
+        console.log('✅ [W2 MAPPER OCR] Employee SSN:', employeeInfo.employeeSSN);
+        break;
+      }
+    }
+    
+    return employeeInfo;
+  }
+
+  /**
+   * Extracts employer information from multi-line OCR format
+   */
+  private static extractEmployerInfoFromOCR(ocrText: string): {
+    employerName?: string;
+    employerAddress?: string;
+    employerEIN?: string;
+  } {
+    console.log('🔍 [W2 MAPPER OCR] Extracting employer information...');
+    
+    const employerInfo: any = {};
+    
+    // Extract employer section (c label followed by multi-line data until next section)
+    // Updated pattern to capture everything until we hit another section marker or end
+    const employerPattern = /c\s+Employer's\s+name,\s+address,\s+and\s+ZIP\s+code\s*\n([\s\S]*?)(?=\n\s*[0-9]\s+[A-Z]|$)/i;
+    const employerMatch = ocrText.match(employerPattern);
+    
+    if (employerMatch) {
+      const employerBlock = employerMatch[1].trim();
+      console.log('🔍 [W2 MAPPER OCR] Found employer block:', employerBlock);
+      
+      const lines = employerBlock.split('\n').map(line => line.trim()).filter(line => line);
+      console.log('🔍 [W2 MAPPER OCR] Employer lines:', lines);
+      
+      if (lines.length > 0) {
+        // First line is the employer name
+        employerInfo.employerName = lines[0];
+        console.log('✅ [W2 MAPPER OCR] Employer name:', employerInfo.employerName);
+        
+        // Remaining lines form the address
+        if (lines.length > 1) {
+          employerInfo.employerAddress = lines.slice(1).join(' ');
+          console.log('✅ [W2 MAPPER OCR] Employer address:', employerInfo.employerAddress);
+        }
+      }
+    } else {
+      console.log('⚠️ [W2 MAPPER OCR] Employer pattern did not match');
+    }
+    
+    // Extract employer EIN
+    const einPattern = /d\s+Employer\s+identification\s+number\s+\(EIN\)\s*\n\s*([0-9]{2}-[0-9]{7})/i;
+    const einMatch = ocrText.match(einPattern);
+    
+    if (einMatch) {
+      employerInfo.employerEIN = einMatch[1];
+      console.log('✅ [W2 MAPPER OCR] Employer EIN:', employerInfo.employerEIN);
+    }
+    
+    return employerInfo;
   }
 
   private static formatSSN(ssn: string): string {
